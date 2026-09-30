@@ -7,6 +7,7 @@ namespace HomeSide\AiAgents\Models;
 use HomeSide\AiAgents\Database\Factories\AiProviderFactory;
 use HomeSide\AiAgents\Enums\FallbackPolicy;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Models\Concerns\ValidatesOnWrite;
 use HomeSide\AiAgents\Providers\AiProviderEndpointPolicy;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
@@ -523,14 +524,15 @@ class AiProvider extends Model
     }
 
     /**
-     * The configured tenant foreign key column, or null when disabled.
+     * The configured tenant foreign key column, or null when isolation is not
+     * `column` (in `database` mode the FK column does not exist).
      *
      * Protected (not private) so the method is safely callable through
      * static:: from validateSecurity and the tenant helpers in any subclass.
      */
     protected static function resolveTenantForeignKey(): ?string
     {
-        if (! (bool) config('ai-agents.tenant.enabled', false)) {
+        if (TenantIsolation::fromConfig() !== TenantIsolation::Column) {
             return null;
         }
 

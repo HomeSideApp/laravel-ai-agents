@@ -6,6 +6,7 @@ namespace HomeSide\AiAgents\Models;
 
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Database\Factories\ModuleAiConfigurationFactory;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Models\Concerns\ValidatesOnWrite;
 use HomeSide\AiAgents\Tenancy\BelongsToTenant;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
@@ -108,7 +109,10 @@ class ModuleAiConfiguration extends Model
 
         /** @var ResolvesTenant $tenantResolver */
         $tenantResolver = app(ResolvesTenant::class);
-        $foreignKey = $tenantResolver->enabled() ? $tenantResolver->foreignKey() : null;
+        // Only apply FK checks in column mode.
+        $foreignKey = $tenantResolver->isolation() === TenantIsolation::Column
+            ? $tenantResolver->foreignKey()
+            : null;
 
         $query = static::query()
             ->where('module', $module)

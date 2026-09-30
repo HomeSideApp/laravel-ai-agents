@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Tenancy;
 
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -36,28 +37,53 @@ trait BelongsToTenant
     }
 
     /**
+     * The tenant foreign key column name.
+     *
+     * Returns null when isolation is not `column` (in `database` mode the
+     * column does not exist).
+     */
+    private function tenantForeignKey(): ?string
+    {
+        if (! $this->tenantEnabled()) {
+            return null;
+        }
+
+        $key = config('ai-agents.tenant.foreign_key');
+
+        return is_string($key) && $key !== '' ? $key : null;
+    }
+
+    /**
      * The owning tenant, resolved through the bound tenant resolver.
      *
      * The related model and foreign key come from the package configuration
      * at call time, so hosts keep their domain naming without subclassing.
      *
+     * Throws in `database` mode because the tenant model lives in the host's
+     * central database and the FK column does not exist on the scoped table.
+     *
      * @return BelongsTo<Model, $this> A relation to the configured tenant
      *                                 model on the configured foreign key.
      *
-     * @throws \LogicException When tenant support is disabled — calling a
-     *                         relation that has no model to target is a
-     *                         programming error, not a runtime condition.
+     * @throws \LogicException When tenant support is disabled or isolation
+     *                         is `database`.
      */
     public function tenant(): BelongsTo
     {
         /** @var ResolvesTenant $resolver */
         $resolver = app(ResolvesTenant::class);
 
+        if ($resolver->isolation() !== TenantIsolation::Column) {
+            throw new \LogicException(
+                'The tenant() relation is only available in column-based isolation mode. In database mode, tenant context is resolved through the host\'s tenancy package.',
+            );
+        }
+
         $modelClass = $resolver->modelClass();
 
         if ($modelClass === null) {
             throw new \LogicException(
-                'Tenant support is disabled. Enable it via AI_AGENTS_TENANT_ENABLED before using the tenant() relation.',
+                'Tenant support is disabled or isolation is "database". Enable column-based tenancy via AI_AGENTS_TENANT_ISOLATION=column before using the tenant() relation.',
             );
         }
 
@@ -87,24 +113,12 @@ trait BelongsToTenant
     /**
      * Whether tenant support is active in the current configuration.
      *
-     * @return bool True when config('ai-agents.tenant.enabled') is truthy.
+     * Returns true only when isolation is `column` (FK column exists).
+     *
+     * @return bool True when isolation is column, false for none/database.
      */
     protected function tenantEnabled(): bool
     {
-        return (bool) config('ai-agents.tenant.enabled', false);
-    }
-
-    /**
-     * The configured tenant foreign key column name.
-     *
-     * @return string|null The configured 'ai-agents.tenant.foreign_key' when
-     *                     it is a non-empty string; null otherwise (signals
-     *                     "do not touch tenant columns").
-     */
-    protected function tenantForeignKey(): ?string
-    {
-        $key = config('ai-agents.tenant.foreign_key');
-
-        return is_string($key) && $key !== '' ? $key : null;
+        return TenantIsolation::fromConfig()->isColumn();
     }
 }

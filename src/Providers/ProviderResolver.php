@@ -7,6 +7,7 @@ namespace HomeSide\AiAgents\Providers;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Enums\FallbackPolicy;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModule;
 use Illuminate\Database\Eloquent\Builder;
@@ -261,7 +262,9 @@ final class ProviderResolver
      */
     private function tenantForeignKey(): ?string
     {
-        if (! $this->tenantResolver->enabled()) {
+        // In database mode there is no FK column — each tenant has its own
+        // database, so scoping queries by tenant_id is redundant.
+        if ($this->tenantResolver->isolation() !== TenantIsolation::Column) {
             return null;
         }
 

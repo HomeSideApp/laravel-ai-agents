@@ -7,6 +7,7 @@ namespace HomeSide\AiAgents\Execution;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Enums\ContentMode;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Models\AiExecutionAttempt;
 use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiRun;
@@ -85,8 +86,15 @@ class ExecutionRecorder
             'metadata' => $metadata,
         ];
 
-        if ($tenantResolver->enabled() && $context->tenantId !== null) {
+        // Write tenant FK column only in column mode.  In database mode the
+        // column does not exist; instead store the key in metadata so
+        // analytics can still group runs by tenant.
+        if ($tenantResolver->isolation() === TenantIsolation::Column && $context->tenantId !== null) {
             $attributes[$tenantResolver->foreignKey()] = $context->tenantId;
+        } elseif ($tenantResolver->isolation() === TenantIsolation::Database && $context->tenantId !== null) {
+            $metadata = $metadata ?? [];
+            $metadata['tenant_key'] = $context->tenantId;
+            $attributes['metadata'] = $metadata;
         }
 
         return AiRun::create($attributes);

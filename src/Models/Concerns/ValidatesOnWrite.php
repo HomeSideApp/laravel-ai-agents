@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Models\Concerns;
 
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
@@ -181,7 +182,7 @@ trait ValidatesOnWrite
         if (is_array($scope) && array_keys($scope) === ['tenant']) {
             if ($foreignKey === null) {
                 throw ValidationException::withMessages([
-                    'scope' => 'Tenant support is disabled (ai-agents.tenant.enabled); the "tenant" scope cannot be used.',
+                    'scope' => 'Tenant support is disabled (ai-agents.tenant.isolation); the "tenant" scope cannot be used.',
                 ]);
             }
 
@@ -196,12 +197,12 @@ trait ValidatesOnWrite
     }
 
     /**
-     * The configured tenant foreign key column, or null when tenant support
-     * is disabled.
+     * The configured tenant foreign key column, or null when isolation is not
+     * `column` (in `database` mode the FK column does not exist).
      */
     protected static function scopeForeignKey(): ?string
     {
-        if (! (bool) config('ai-agents.tenant.enabled', false)) {
+        if (TenantIsolation::fromConfig() !== TenantIsolation::Column) {
             return null;
         }
 
