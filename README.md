@@ -199,15 +199,24 @@ When an agent requests a module that has no dedicated provider, the resolver
 falls back to a provider assigned to `config('ai-agents.fallback_module')`
 (default `'general'`).
 
-## Optional tenant support
+## Multi-tenancy (none / column / database)
 
-Tenant support (household, team, workspace — whatever the host calls it) is
-**disabled by default**: no column, no foreign key, no scoping, no cost.
+The package supports three isolation modes, configured via
+`ai-agents.tenant.isolation`:
 
-### Enable via environment
+| Mode | Description | Use case |
+|---|---|---|
+| `none` (default) | No multi-tenancy: no tenant columns, no scoping. | Single-tenant apps |
+| `column` | Column-based scoping via a configurable FK on `ai_*` tables. | homeside/household |
+| `database` | Each tenant has its own database. Catalog lives on a central BD. | stancl/tenancy (ciberscan) |
+
+`AI_AGENTS_TENANT_ENABLED=true` without an explicit `isolation` value resolves
+to `column` for backwards compatibility.
+
+### Column mode (homeside/household)
 
 ```dotenv
-AI_AGENTS_TENANT_ENABLED=true
+AI_AGENTS_TENANT_ISOLATION=column
 AI_AGENTS_TENANT_MODEL=App\Models\Household
 AI_AGENTS_TENANT_TABLE=households
 AI_AGENTS_TENANT_FOREIGN_KEY=household_id
@@ -215,31 +224,50 @@ AI_AGENTS_TENANT_MEMBERS_TABLE=household_members
 AI_AGENTS_TENANT_USER_COLUMN=active_household_id
 ```
 
-With those six values, and without writing any host code:
+- Tenant migrations (published via `ai-agents-scoped-migrations` or
+  `ai-agents-tenant-migrations`) add the FK column.
+- `ProviderResolver` gains a tenant scope: **user → tenant → system**.
+- `ExecutionRecorder` stamps `household_id` on every run.
+- `GenericTenantResolver` authorises candidates through the membership table
+  and the user's active-tenant column.
 
-- The tenant migrations add the configured column (e.g. `household_id`) to
-  `ai_providers`, `ai_runs`, `ai_conversations` and
-  `module_ai_configurations`.
-- `ProviderResolver` gains a tenant scope: **tenant → user → system**.
-- `AiExecutionContextData::fromRequest()` accepts the tenant id as second
-  argument, and `ExecutionRecorder` stamps it on every run.
-- `GenericTenantResolver` authorises the candidate tenant through the
-  membership table and the user's active-tenant column.
+### Database mode (stancl/tenancy)
 
-### Custom resolver
+```dotenv
+AI_AGENTS_TENANT_ISOLATION=database
+AI_AGENTS_TENANT_CURRENT_KEY=fn () => tenant()?->getTenantKey()
+AI_AGENTS_CATALOG_CONNECTION=central
+```
+
+- Scoped `ai_*` migrations are **not** loaded automatically (the host publishes
+  them into the tenant migration folder).
+- Catalog tables (`models_dev_*`) live on the `central` connection.
+- `DatabaseTenantResolver` returns the current tenant key for run metadata only;
+  query scoping is a no-op because each tenant's queries hit its own database.
+- Run `php artisan ai-agents:sync-agents` inside the tenant-creation pipeline
+  so agents are registered per-tenant.
+- `ai-agents:usage:consolidate` runs once per tenant automatically.
+
+### Host with custom resolver
 
 Hosts with rules the generic resolver cannot express (role-based access,
 nested tenants, invitations) implement the contract and point to it:
 
 ```dotenv
 AI_AGENTS_TENANT_RESOLVER=App\Ai\Tenancy\MyTenantResolver
+AI_AGENTS_TENANT_RUNNER=App\Ai\Tenancy\MyTenantRunner
 ```
 
 ```php
 class MyTenantResolver implements \HomeSide\AiAgents\Contracts\ResolvesTenant
 {
-    // enabled(), modelClass(), foreignKey(), table(),
+    // isolation(), enabled(), modelClass(), foreignKey(), table(),
     // resolveAccessible(), scopeQuery()
+}
+
+class MyTenantRunner implements \HomeSide\AiAgents\Contracts\RunsForEachTenant
+{
+    // each(callable $callback): void
 }
 ```
 
@@ -250,14 +278,18 @@ use HomeSide\AiAgents\Execution\AiExecutionContextData;
 
 $context = new AiExecutionContextData(
     userId: auth()->id(),
-    tenantId: $household->id, // optional; only meaningful when enabled
+    tenantId: $household->id, // optional; only meaningful when active
 );
 ```
 
-Publish the tenant migrations explicitly if you prefer owning them in the
-application: `php artisan vendor:publish --tag=ai-agents-tenant-migrations`.
-They load automatically from the package while
-`config('ai-agents.tenant.enabled')` is true.
+### Migration tags
+
+| Tag | What it publishes |
+|---|---|
+| `ai-agents-migrations` | Scoped + catalog (legacy, backward compat) |
+| `ai-agents-scoped-migrations` | Scoped `ai_*` only (use in database mode → tenant folder) |
+| `ai-agents-catalog-migrations` | `models_dev_*` catalog only |
+| `ai-agents-tenant-migrations` | Column-tenant FK migrations (column mode only, legacy) |
 
 ## Running an agent
 
