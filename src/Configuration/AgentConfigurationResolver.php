@@ -6,6 +6,7 @@ namespace HomeSide\AiAgents\Configuration;
 
 use HomeSide\AiAgents\AgentRegistry;
 use HomeSide\AiAgents\Contracts\DomainAgent;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Execution\AiExecutionContextData;
 use HomeSide\AiAgents\Models\AiAgent;
 use HomeSide\AiAgents\Models\AiGlobalSetting;
@@ -213,12 +214,12 @@ class AgentConfigurationResolver
     }
 
     /**
-     * The configured tenant foreign key column, or null when tenant support
-     * is disabled.
+     * The configured tenant foreign key column, or null when isolation is not
+     * `column` (in `database` mode the FK column does not exist).
      */
     private function tenantForeignKey(): ?string
     {
-        if (! (bool) config('ai-agents.tenant.enabled', false)) {
+        if (TenantIsolation::fromConfig() !== TenantIsolation::Column) {
             return null;
         }
 

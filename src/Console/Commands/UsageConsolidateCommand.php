@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Console\Commands;
 
+use HomeSide\AiAgents\Contracts\RunsForEachTenant;
 use HomeSide\AiAgents\Execution\CostEstimator;
 use Illuminate\Console\Command;
 
@@ -29,7 +30,7 @@ class UsageConsolidateCommand extends Command
      *
      * @return int Exit code — SUCCESS when consolidation completes.
      */
-    public function handle(CostEstimator $estimator): int
+    public function handle(CostEstimator $estimator, RunsForEachTenant $runner): int
     {
         /** @var string|null $days */
         $days = $this->option('days');
@@ -37,7 +38,13 @@ class UsageConsolidateCommand extends Command
 
         $this->info("Consolidating AI runs older than {$retention} day(s)...");
 
-        $stats = $estimator->consolidate($retention);
+        $stats = ['runs_consolidated' => 0, 'periods' => 0];
+
+        $runner->each(function () use ($estimator, $retention, &$stats): void {
+            $localStats = $estimator->consolidate($retention);
+            $stats['runs_consolidated'] += $localStats['runs_consolidated'];
+            $stats['periods'] += $localStats['periods'];
+        });
 
         if ($stats['runs_consolidated'] === 0) {
             $this->line('Nothing to consolidate.');
