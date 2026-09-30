@@ -9,6 +9,7 @@ use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
 use HomeSide\AiAgents\Console\Commands\ModelsDevSyncCommand;
+use HomeSide\AiAgents\Console\Commands\SyncAgentsCommand;
 use HomeSide\AiAgents\Console\Commands\UsageConsolidateCommand;
 use HomeSide\AiAgents\Context\ContextBuilder;
 use HomeSide\AiAgents\Context\ContextProvider;
@@ -16,6 +17,8 @@ use HomeSide\AiAgents\Contracts\DomainAgent;
 use HomeSide\AiAgents\Contracts\InspectsPrompt;
 use HomeSide\AiAgents\Contracts\ModuleAiProvider;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
+use HomeSide\AiAgents\Contracts\RunsForEachTenant;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Execution\CostEstimator;
 use HomeSide\AiAgents\Execution\ExecutionRecorder;
 use HomeSide\AiAgents\Execution\RunContentRedactor;
@@ -35,8 +38,11 @@ use HomeSide\AiAgents\Security\NullPromptInspector;
 use HomeSide\AiAgents\Security\PromptFirewallPipeline;
 use HomeSide\AiAgents\Security\StatisticalPromptScorer;
 use HomeSide\AiAgents\Synchronizer\AgentSynchronizer;
+use HomeSide\AiAgents\Tenancy\DatabaseTenantResolver;
 use HomeSide\AiAgents\Tenancy\GenericTenantResolver;
 use HomeSide\AiAgents\Tenancy\NullTenantResolver;
+use HomeSide\AiAgents\Tenancy\SingleContextRunner;
+use HomeSide\AiAgents\Tenancy\StanclTenantRunner;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Model;
@@ -57,11 +63,19 @@ use Illuminate\Support\Str;
 final class AiServiceProvider extends ServiceProvider
 {
     /**
+     * The resolved tenant isolation mode for this installation, computed once
+     * during register() and reused in boot()/autoSyncAgents().
+     */
+    private TenantIsolation $isolations;
+
+    /**
      * Register package services.
      */
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/ai-agents.php', 'ai-agents');
+
+        $this->isolations = TenantIsolation::fromConfig();
 
         // Factory resolution for HasFactory-enabled package models. Package
         // models resolve to the package's own Database\Factories namespace;
@@ -129,18 +143,21 @@ final class AiServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(ResolvesTenant::class, function (Application $app): ResolvesTenant {
+            $isolations = TenantIsolation::fromConfig();
             $customResolver = config('ai-agents.tenant.resolver');
 
             if (is_string($customResolver) && $customResolver !== '' && class_exists($customResolver)) {
-                /** @var ResolvesTenant $resolver */
-                $resolver = $app->make($customResolver);
+                /** @var ResolvesTenant $customResolverResolved */
+                $customResolverResolved = $app->make($customResolver);
 
-                return $resolver;
+                return $customResolverResolved;
             }
 
-            return (bool) config('ai-agents.tenant.enabled', false)
-                ? $app->make(GenericTenantResolver::class)
-                : $app->make(NullTenantResolver::class);
+            return match ($isolations) {
+                TenantIsolation::Column => $app->make(GenericTenantResolver::class),
+                TenantIsolation::Database => $app->make(DatabaseTenantResolver::class),
+                TenantIsolation::None => $app->make(NullTenantResolver::class),
+            };
         });
 
         $this->app->singleton(AgentRegistry::class);
@@ -172,11 +189,41 @@ final class AiServiceProvider extends ServiceProvider
             );
         });
 
+        // Auto-set catalog.connection to 'central' in database mode so the
+        // models.dev catalog lives on the central database.
+        if ($this->isolations === TenantIsolation::Database) {
+            $connection = config('ai-agents.catalog.connection');
+            if (is_null($connection) || $connection === '') {
+                config(['ai-agents.catalog.connection' => 'central']);
+            }
+        }
+
         // Firewall operations (Phase 2 of the plan): train, evaluate and
         // status over the classifier artifact.
         $this->app->singleton(FirewallTrainCommand::class);
         $this->app->singleton(FirewallEvaluateCommand::class);
         $this->app->singleton(FirewallStatusCommand::class);
+
+        // RunsForEachTenant: per-tenant command runner.  Resolved from a
+        // custom config class-string when provided, otherwise StanclTenantRunner
+        // (when the class exists in database mode) or SingleContextRunner.
+        $this->app->singleton(RunsForEachTenant::class, function (Application $app): RunsForEachTenant {
+            $customRunner = config('ai-agents.tenant.runner');
+
+            if (is_string($customRunner) && $customRunner !== '' && class_exists($customRunner)) {
+                /** @var RunsForEachTenant $customRunnerResolved */
+                $customRunnerResolved = $app->make($customRunner);
+
+                return $customRunnerResolved;
+            }
+
+            // In database mode, use the stancl tenant runner when available.
+            if ($this->isolations === TenantIsolation::Database && class_exists(Tenancy::class)) {
+                return $app->make(StanclTenantRunner::class);
+            }
+
+            return $app->make(SingleContextRunner::class);
+        });
 
         $this->commands([
             FirewallTrainCommand::class,
@@ -184,6 +231,7 @@ final class AiServiceProvider extends ServiceProvider
             FirewallStatusCommand::class,
             ModelsDevSyncCommand::class,
             UsageConsolidateCommand::class,
+            SyncAgentsCommand::class,
         ]);
     }
 
@@ -192,21 +240,55 @@ final class AiServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $migrationsConfig = (array) config('ai-agents.migrations', []);
+        $loadScoped = $migrationsConfig['load_scoped']
+            ?? ($this->isolations !== TenantIsolation::Database);
+        $loadCatalog = (bool) ($migrationsConfig['load_catalog'] ?? true);
+
+        if ($loadScoped) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        }
+
+        if ($loadCatalog) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations-catalog');
+        }
+
+        if ($this->isolations === TenantIsolation::Column) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations-column-tenant');
+        }
 
         $this->publishes([
             __DIR__.'/../config/ai-agents.php' => config_path('ai-agents.php'),
         ], 'ai-agents-config');
 
+        // Legacy tag: publishes everything (scoped + catalog) for backward
+        // compatibility with hosts that run `--tag=ai-agents-migrations`.
         $this->publishes([
             __DIR__.'/../database/migrations' => database_path('migrations'),
+            __DIR__.'/../database/migrations-catalog' => database_path('migrations'),
         ], 'ai-agents-migrations');
 
-        if (config('ai-agents.tenant.enabled')) {
-            $this->loadMigrationsFrom(__DIR__.'/../database/migrations/tenant');
+        // Scoped migrations only: for hosts in `database` mode that want to
+        // publish into their tenant migration folder.
+        $scopedPublishes = [
+            __DIR__.'/../database/migrations' => database_path('migrations'),
+        ];
 
+        if ($this->isolations === TenantIsolation::Column) {
+            $scopedPublishes[__DIR__.'/../database/migrations-column-tenant'] = database_path('migrations');
+        }
+
+        $this->publishes($scopedPublishes, 'ai-agents-scoped-migrations');
+
+        // Catalog migrations only: for central BD in `database` mode.
+        $this->publishes([
+            __DIR__.'/../database/migrations-catalog' => database_path('migrations'),
+        ], 'ai-agents-catalog-migrations');
+
+        // Legacy tenant-migrations tag (column mode only).
+        if ($this->isolations === TenantIsolation::Column) {
             $this->publishes([
-                __DIR__.'/../database/migrations/tenant' => database_path('migrations'),
+                __DIR__.'/../database/migrations-column-tenant' => database_path('migrations'),
             ], 'ai-agents-tenant-migrations');
         }
 
@@ -277,9 +359,20 @@ final class AiServiceProvider extends ServiceProvider
      * remembering to run the sync command. Idempotent and self-healing by
      * design; failures (migrations pending, DB unreachable) never break the
      * request — the resolver's per-run self-heal covers those edge cases.
+     *
+     * Skipped in `database` isolation mode: the boot runs against the central
+     * BD where the ai_agents table does not live.  Hosts should trigger the
+     * synchroniser inside their tenant-creation pipeline (e.g. via
+     * `ai-agents:sync-agents` or calling `AgentSynchronizer::sync()` in a
+     * tenancy hook).  The per-run self-heal in AgentConfigurationResolver
+     * handles the rest.
      */
     private function autoSyncAgents(): void
     {
+        if ($this->isolations === TenantIsolation::Database) {
+            return;
+        }
+
         if (! (bool) config('ai-agents.auto_sync', true)) {
             return;
         }
