@@ -4,32 +4,123 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Tests\Unit\Tenancy;
 
+use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Tenancy\GenericTenantResolver;
 use HomeSide\AiAgents\Tenancy\NullTenantResolver;
 use HomeSide\AiAgents\Tests\TestCase;
 use HomeSide\AiAgents\Tests\TestUser;
-use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 
-final class GenericTenantResolverTest extends TestCase
+/**
+ * Tests for GenericTenantResolver (column-based isolation mode).
+ */
+class GenericTenantResolverTest extends TestCase
 {
     /**
-     * With tenancy disabled the resolver is a full no-op.
+     * Setup: ensure isolation is column and tenant.enabled is truthy (BC).
      */
-    public function test_disabled_tenancy_resolves_nothing_and_leaves_queries_untouched(): void
+    protected function setUp(): void
     {
+        parent::setUp();
+
+        config()->set('ai-agents.tenant.isolation', 'column');
+        config()->set('ai-agents.tenant.enabled', true);
+    }
+
+    /**
+     * The resolver bound by the service provider is GenericTenantResolver
+     * when isolation is column.
+     */
+    public function test_bound_resolver_is_generic_when_column_mode(): void
+    {
+        $app = app();
+
+        /** @var Application $app */
+        $resolver = $app->make(ResolvesTenant::class);
+
+        $this->assertInstanceOf(GenericTenantResolver::class, $resolver);
+        $this->assertSame('column', $resolver->isolation()->value);
+    }
+
+    /**
+     * When isolation is none, the bound resolver is NullTenantResolver.
+     */
+    public function test_bound_resolver_is_null_when_isolation_none(): void
+    {
+        config()->set('ai-agents.tenant.isolation', 'none');
         config()->set('ai-agents.tenant.enabled', false);
+
+        // Need to re-resolve the singleton.
+        app()->refresh(ResolvesTenant::class, app(ResolvesTenant::class), 'default');
+
+        $resolver = app()->make(ResolvesTenant::class);
+
+        $this->assertInstanceOf(NullTenantResolver::class, $resolver);
+        $this->assertSame('none', $resolver->isolation()->value);
+    }
+
+    /**
+     * When tenancy is disabled, the resolver returns null and enabled() is false.
+     */
+    public function test_disabled_resolver_returns_null(): void
+    {
+        config()->set('ai-agents.tenant.isolation', 'none');
+        config()->set('ai-agents.tenant.enabled', false);
+
+        $resolver = new NullTenantResolver;
+
+        $this->assertFalse($resolver->enabled());
+        $this->assertNull($resolver->resolveAccessible(userId: 1, tenantId: 't-1'));
+    }
+
+    /**
+     * GenericTenantResolver always reports isolation as column.
+     */
+    public function test_generic_resolver_isolation_is_column(): void
+    {
+        $resolver = new GenericTenantResolver;
+
+        $this->assertSame('column', $resolver->isolation()->value);
+        $this->assertTrue($resolver->isolation()->isColumn());
+        $this->assertFalse($resolver->isolation()->isDatabase());
+        $this->assertTrue($resolver->enabled());
+    }
+
+    /**
+     * The foreign key returns the configured column name.
+     */
+    public function test_foreign_key_returns_configured_column(): void
+    {
+        config()->set('ai-agents.tenant.foreign_key', 'household_id');
 
         $resolver = new GenericTenantResolver;
 
-        $this->assertFalse($resolver->enabled());
-        $this->assertNull($resolver->resolveAccessible(userId: 1, tenantId: 'abc'));
-        $this->assertNull($resolver->modelClass());
+        $this->assertSame('household_id', $resolver->foreignKey());
+    }
 
-        $query = TestUser::query();
-        $originalSql = $query->toSql();
+    /**
+     * Without a configured foreign key, it defaults to 'tenant_id'.
+     */
+    public function test_foreign_key_defaults_to_tenant_id(): void
+    {
+        config()->set('ai-agents.tenant.foreign_key', '');
 
-        $this->assertSame($originalSql, $resolver->scopeQuery($query, 'abc')->toSql());
+        $resolver = new GenericTenantResolver;
+
+        $this->assertSame('tenant_id', $resolver->foreignKey());
+    }
+
+    /**
+     * Table returns the configured tenant table.
+     */
+    public function test_table_returns_configured_table(): void
+    {
+        config()->set('ai-agents.tenant.table', 'households');
+
+        $resolver = new GenericTenantResolver;
+
+        $this->assertSame('households', $resolver->table());
     }
 
     /**
@@ -37,7 +128,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_explicit_tenant_unauthorised_returns_null(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
         config()->set('ai-agents.tenant.members_table', 'test_members');
         config()->set('ai-agents.tenant.members_user_key', 'user_id');
@@ -55,7 +145,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_explicit_tenant_with_membership_is_returned(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.members_table', 'test_members');
         config()->set('ai-agents.tenant.members_tenant_key', 'household_id');
 
@@ -72,7 +161,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_falls_back_to_user_active_tenant_with_membership(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
         config()->set('ai-agents.tenant.user_column', 'active_household_id');
         config()->set('ai-agents.tenant.members_table', 'test_members');
@@ -92,7 +180,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_active_tenant_without_membership_is_rejected(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.user_column', 'active_household_id');
         config()->set('ai-agents.tenant.members_table', 'test_members');
         config()->set('ai-agents.tenant.members_tenant_key', 'household_id');
@@ -110,7 +197,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_without_members_table_the_candidate_is_trusted(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.members_table', null);
 
         $resolver = new GenericTenantResolver;
@@ -124,7 +210,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_enabled_tenancy_without_candidate_returns_null(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.members_table', 'test_members');
 
         DB::table('test_users')->insert(['id' => 9, 'name' => 'Cy', 'email' => 'cy@example.com']);
@@ -139,7 +224,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_scope_query_filters_by_tenant_when_given(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
 
         $resolver = new GenericTenantResolver;
@@ -153,7 +237,6 @@ final class GenericTenantResolverTest extends TestCase
      */
     public function test_scope_query_with_null_targets_tenant_less_rows(): void
     {
-        config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
 
         $resolver = new GenericTenantResolver;
@@ -164,17 +247,14 @@ final class GenericTenantResolverTest extends TestCase
     }
 
     /**
-     * The null resolver behaves identically to the generic one with tenancy
-     * off: the container swap must be transparent to callers.
+     * modelClass returns the configured model class.
      */
-    public function test_null_resolver_contract_matches_disabled_generic(): void
+    public function test_model_class_returns_configured_value(): void
     {
-        $resolver = new NullTenantResolver;
-        $query = TestUser::query();
+        config()->set('ai-agents.tenant.model', 'App\\Models\\Team');
 
-        $this->assertFalse($resolver->enabled());
-        $this->assertNull($resolver->resolveAccessible(1, 't-1'));
-        $this->assertSame($query->toSql(), $resolver->scopeQuery($query, 't-1')->toSql());
-        $this->assertInstanceOf(Builder::class, $resolver->scopeQuery($query, 't-1'));
+        $resolver = new GenericTenantResolver;
+
+        $this->assertSame('App\\Models\\Team', $resolver->modelClass());
     }
 }

@@ -42,6 +42,7 @@ abstract class TestCase extends TestbenchTestCase
     {
         $app['config']->set('ai-agents.user_model', TestUser::class);
         $app['config']->set('ai-agents.users_table', 'test_users');
+        $app['config']->set('ai-agents.tenant.isolation', 'none');
         $app['config']->set('ai-agents.tenant.enabled', false);
         $app['config']->set('ai-agents.firewall.action', 'flag');
         $app['config']->set('ai-agents.fallback_module', 'general');

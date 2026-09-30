@@ -205,6 +205,7 @@ final class AiActionProposalValidatedWriteTest extends TestCase
      */
     public function test_tenant_scoped_proposal_when_tenancy_enabled(): void
     {
+        config()->set('ai-agents.tenant.isolation', 'column');
         config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
 

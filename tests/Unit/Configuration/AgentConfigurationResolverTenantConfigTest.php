@@ -41,6 +41,7 @@ final class AgentConfigurationResolverTenantConfigTest extends TestCase
      */
     private function enableTenancy(): void
     {
+        config()->set('ai-agents.tenant.isolation', 'column');
         config()->set('ai-agents.tenant.enabled', true);
         config()->set('ai-agents.tenant.foreign_key', 'household_id');
 

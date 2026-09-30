@@ -60,27 +60,61 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Optional Tenant Support
+    | Tenant Isolation Mode
     |--------------------------------------------------------------------------
     |
-    | Tenant support (household, team, workspace — whatever the host calls
-    | it) is disabled by default: no column, no foreign key, no scoping.
+    | Controls the multi-tenancy strategy for the package. Accepted values:
     |
-    | Enable it with AI_AGENTS_TENANT_ENABLED=true. The migrations in
-    | database/migrations/tenant/ add the configured foreign key column to
-    | ai_providers, ai_runs, ai_conversations and module_ai_configurations,
-    | and ProviderResolver gains a tenant scope (tenant → user → system).
+    | - `none`   (default): no multi-tenancy. No tenant columns, no scoping.
+    | - `column`: column-based tenant scoping. A foreign key column (default
+    |   `tenant_id`) is added to the `ai_*` tables and every query is scoped
+    |   to the resolved tenant.  This is the mode used by homeside/household.
+    | - `database`: database-per-tenant. Each tenant has its own database
+    |   with the full set of `ai_*` tables; the package queries the tenant's
+    |   database directly.  The models.dev catalog lives on a central
+    |   connection shared by every tenant.  This is the mode used by
+    |   stancl/tenancy-based apps such as ciberscan.
     |
-    | A host with custom membership rules may implement
-    | HomeSide\AiAgents\Contracts\ResolvesTenant and register the class-string
-    | in 'resolver'; otherwise GenericTenantResolver handles everything from
-    | the values below.
+    | When set to `none` the package is completely tenant-agnostic.
+    |
+    | Backwards-compatibility alias: when `isolation` is not set and
+    | `tenant.enabled` is true, the package behaves as if `isolation` were
+    | `column`, preserving existing behaviour.
+    |
+    | In `database` mode a callable to resolve the current tenant key must
+    | be provided via `tenant.current_key` (e.g. `fn () => tenant()?->id`).
+    |
+    | A host may also provide a custom runner for per-tenant command
+    | execution via `tenant.runner` (class-string of
+    | `\HomeSide\AiAgents\Contracts\RunsForEachTenant`).
+    |
+    | A host with custom membership rules (applies to `column` mode only)
+    | may implement `\HomeSide\AiAgents\Contracts\ResolvesTenant` and
+    | register the class-string in `tenant.resolver`; otherwise
+    | `GenericTenantResolver` handles everything from the values below.
     |
     */
 
     'tenant' => [
+        'isolation' => env('AI_AGENTS_TENANT_ISOLATION', 'none'),
+
+        // BC alias: when `isolation` is unset, `enabled=true` is treated
+        // as `isolation=column`.
         'enabled' => env('AI_AGENTS_TENANT_ENABLED', false),
+
+        // Resolved by the host's tenancy package (database mode).
+        // Example: fn () => tenant()?->getTenantKey()
+        'current_key' => env('AI_AGENTS_TENANT_CURRENT_KEY'),
+
+        // Custom runner for per-tenant command execution (database mode).
+        // Class-string implementing \HomeSide\AiAgents\Contracts\RunsForEachTenant.
+        // Defaults to StanclTenantRunner when the class exists.
+        'runner' => env('AI_AGENTS_TENANT_RUNNER'),
+
+        // Column-mode only: resolver class-string (null = GenericTenantResolver).
         'resolver' => env('AI_AGENTS_TENANT_RESOLVER'),
+
+        // Column-mode only: tenant model configuration.
         'model' => env('AI_AGENTS_TENANT_MODEL', 'App\\Models\\Team'),
         'table' => env('AI_AGENTS_TENANT_TABLE', 'teams'),
         'foreign_key' => env('AI_AGENTS_TENANT_FOREIGN_KEY', 'tenant_id'),
@@ -88,6 +122,49 @@ return [
         'members_user_key' => env('AI_AGENTS_TENANT_MEMBERS_USER_KEY', 'user_id'),
         'members_tenant_key' => env('AI_AGENTS_TENANT_MEMBERS_TENANT_KEY', 'tenant_id'),
         'user_column' => env('AI_AGENTS_TENANT_USER_COLUMN', 'active_tenant_id'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Migrations
+    |--------------------------------------------------------------------------
+    |
+    | Controls which migration groups the package loads automatically.
+    |
+    | load_scoped: loads the scoped `ai_*` tables.  Defaults to `true` when
+    | isolation is `none` or `column`, and `false` when `database` (the host
+    | publishes these into the tenant migration folder instead).
+    |
+    | load_catalog: loads the reference catalog tables
+    | (`models_dev_providers`, `models_dev_models`).  Defaults to `true`.
+    |
+    */
+
+    'migrations' => [
+        'load_scoped' => env('AI_AGENTS_MIGRATIONS_SCOPED', null),
+        'load_catalog' => env('AI_AGENTS_MIGRATIONS_CATALOG', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catalog Connection
+    |--------------------------------------------------------------------------
+    |
+    | Database connection used by the models.dev reference catalog tables
+    | (`models_dev_providers`, `models_dev_models`).
+    |
+    | `null` = use the default connection.  In `database` isolation mode the
+    | package auto-sets this to `'central'` so the catalog always lives on
+    | the central database regardless of which tenant connection is active.
+    |
+    | logo_disk: filesystem disk used to store downloaded provider logos.
+    | In `database` mode the host points this to a central shared disk.
+    |
+    */
+
+    'catalog' => [
+        'connection' => env('AI_AGENTS_CATALOG_CONNECTION'),
+        'logo_disk' => env('AI_AGENTS_CATALOG_LOGO_DISK'),
     ],
 
     /*
