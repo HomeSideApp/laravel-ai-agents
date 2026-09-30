@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{namespace}};
+
+use HomeSide\AiAgents\Contracts\ModuleAiProvider;
+
+/**
+ * Stub for a host application AI module.
+ *
+ * A module declares the agents it needs, together with their default
+ * prompts and parameters. These defaults seed the ai_agents and
+ * module_ai_configurations rows when the synchroniser runs.
+ *
+ * module() returns a plain string, so hosts may declare any domain module
+ * identifier (e.g. '{{module}}') without touching package code.
+ */
+class {{class}} implements ModuleAiProvider
+{
+    public function module(): string
+    {
+        return '{{module}}';
+    }
+
+    /**
+     * Agents this module needs, keyed by agent name.
+     *
+     * @return array<string, array{
+     *     label: string,
+     *     system_prompt: string,
+     *     description: string|null,
+     *     parameters: array{temperature?: float, max_tokens?: int}|null
+     * }>
+     */
+    public function agents(): array
+    {
+        return [
+            '{{snake_name}}' => [
+                'label' => '{{human_name}}',
+                'system_prompt' => 'Default system prompt for {{snake_name}}.',
+                'description' => null,
+                'parameters' => [
+                    'temperature' => 0.5,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Default module configuration.
+     *
+     * @return array<string, mixed>
+     */
+    public function defaultConfiguration(): array
+    {
+        return [
+            'enabled' => true,
+        ];
+    }
+}

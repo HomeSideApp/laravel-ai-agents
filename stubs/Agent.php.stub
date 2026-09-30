@@ -1,0 +1,101 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{namespace}};
+
+use HomeSide\AiAgents\Configuration\Capability;
+use HomeSide\AiAgents\Contracts\DomainAgent;
+use HomeSide\AiAgents\Enums\PrivacyLevel;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+
+/**
+ * Stub for a host application AI agent.
+ *
+ * Implement the Laravel AI SDK native interfaces (Agent, HasTools,
+ * HasStructuredOutput, ...) plus DomainAgent, which declares the
+ * package metadata.
+ */
+class {{class}} implements DomainAgent, Agent, HasTools
+{
+    public function key(): string
+    {
+        return '{{module}}.{{snake_name}}';
+    }
+
+    public function module(): string
+    {
+        return '{{module}}';
+    }
+
+    public function version(): int
+    {
+        return 1;
+    }
+
+    public function requiredCapabilities(): array
+    {
+        return [
+            Capability::Text,
+            Capability::Tools,
+        ];
+    }
+
+    public function defaultConfiguration(): array
+    {
+        return [
+            'temperature' => 0.5,
+            'max_tokens' => 2048,
+            'max_steps' => 1,
+            'timeout' => 90,
+        ];
+    }
+
+    /**
+     * Context provider keys consumed by this agent.
+     */
+    public function contextProviders(): array
+    {
+        return [
+            // 'user',
+        ];
+    }
+
+    public function maxContextTokens(): int
+    {
+        return 8000;
+    }
+
+    /**
+     * Minimum privacy level the resolved provider must satisfy, or null
+     * when the agent accepts any provider (set per host agent).
+     */
+    public function requiredPrivacyLevel(): ?PrivacyLevel
+    {
+        return null;
+    }
+
+    /**
+     * Core instructions (layer 1 of the prompt, not editable by admins).
+     */
+    public function instructions(): string
+    {
+        return <<<'INSTRUCTIONS'
+You are {{snake_name}}. Describe your role and output contract here.
+INSTRUCTIONS;
+    }
+
+    /**
+     * Tools the agent can invoke.
+     *
+     * Tools live in the host application and may reference host domain
+     * models, storage and routing.
+     */
+    public function tools(): array
+    {
+        return [
+            // \App\Ai\Tools\ExampleTool::class,
+        ];
+    }
+}

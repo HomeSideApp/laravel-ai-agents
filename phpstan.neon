@@ -1,0 +1,37 @@
+includes:
+    # Resolved relative to this file: the package's own vendor/ when installed
+    # standalone (composer install inside the package). When analysing the
+    # package from a host that mounts it as a path repository, run phpstan
+    # with the host's own phpstan.neon instead — the host's larastan version
+    # differs and its extension must come from the host config.
+    - vendor/larastan/larastan/extension.neon
+    - vendor/nesbot/carbon/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+        - config
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # Package config files legitimately read env(): they are evaluated
+        # before config caching and ship inside the package, not in the
+        # host's config/ directory that the rule assumes.
+        -
+            message: '#Called ''env'' outside of the config directory#'
+
+        # Ownership is resolved at runtime from host configuration; the
+        # class-string is asserted with inline PHPDoc above each call. True
+        # generics would be required to model this at level 8.
+        -
+            message: '#(Unable to resolve the template type TRelatedModel|Parameter \#1 \$related of method Illuminate\\Database\\Eloquent\\Model::belongsTo\(\) expects class-string<Illuminate\\Database\\Eloquent\\Model>)#'
+
+        # AgentMetadata is opt-in; agents implementing only DomainAgent are
+        # valid, so the trait is intentionally "unused" from this root.
+        -
+            message: '#Trait HomeSide\\AiAgents\\Concerns\\UsesRuntimeInstructions is used zero times#'
+
+        # Same opt-in pattern: host agents consume the provider-capabilities
+        # trait; the package only ships the contract + manager injection.
+        -
+            message: '#Trait HomeSide\\AiAgents\\Concerns\\UsesProviderCapabilities is used zero times#'

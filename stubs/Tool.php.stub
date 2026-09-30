@@ -1,0 +1,69 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{namespace}};
+
+use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Tools\Request;
+
+/**
+ * Stub for a host application AI tool.
+ *
+ * Tools are host-side capabilities an agent's model may invoke (querying
+ * domain models, calling services, generating content...). They always
+ * perform their own authorisation server-side: the model only provides
+ * inputs, never permissions — verify ownership in handle() before
+ * returning any data.
+ *
+ * List the tool class-string in an agent's tools() method to expose it.
+ */
+class {{class}} implements Tool
+{
+    /**
+     * Human-readable description exposed to the model.
+     *
+     * Describe what the tool does and when to use it — the model chooses
+     * tools from these descriptions alone.
+     */
+    public function description(): string
+    {
+        return 'Describe what this tool does and when the model should use it.';
+    }
+
+    /**
+     * JSON schema describing the tool input.
+     *
+     * @param  JsonSchema  $schema  The schema factory provided by the SDK.
+     * @return array<string, mixed> The schema definition array.
+     */
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'query' => $schema->string()->description('Describe each input here.'),
+            // 'limit' => $schema->integer()->nullable()->description('...'),
+        ];
+    }
+
+    /**
+     * Execute the tool.
+     *
+     * Authorise inside this method against your domain models and policies
+     * (never trust the model to scope its own access), then return a
+     * JSON-encoded string — it is fed back to the model as the tool result.
+     *
+     * @param  Request  $request  The tool invocation request from the model.
+     */
+    public function handle(Request $request): string
+    {
+        $query = $request->string('query');
+        // $limit = min($request->integer('limit', 10), 50);
+
+        // Authorise: e.g. scope queries to auth()->id() or the current tenant.
+
+        return json_encode([
+            'result' => "Handled: {$query}",
+        ]);
+    }
+}

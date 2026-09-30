@@ -1,0 +1,17 @@
+# One-shot runner for the package QA suite.
+#
+#   docker compose run --rm qa <command>
+#
+# The package directory is mounted at /app, so composer install, phpunit,
+# pint and phpstan all operate on the real working tree.
+
+services:
+    qa:
+        build: .
+        working_dir: /app
+        volumes:
+            - .:/app
+            - composer-cache:/tmp/composer-cache
+
+volumes:
+    composer-cache:

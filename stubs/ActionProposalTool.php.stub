@@ -1,0 +1,83 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{namespace}};
+
+use HomeSide\AiAgents\Execution\AiExecutionContextData;
+use HomeSide\AiAgents\Models\AiActionProposal;
+use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Tools\Request;
+
+/**
+ * Stub for a human-in-the-loop action proposal tool.
+ *
+ * The agent never mutates host data directly: this tool records a pending
+ * proposal (AiActionProposal) that the user accepts or rejects through the
+ * host's own action, which then dispatches to domain handlers. Persisting
+ * and validating the proposal happens through the package's validated
+ * writes; executing the action stays host-side because proposal types and
+ * handlers are domain-specific.
+ *
+ * Requires an execution context: an empty context is rejected so proposals
+ * are never created without a user identity.
+ */
+class {{class}} implements Tool
+{
+    public function __construct(
+        private readonly AiExecutionContextData $context,
+    ) {}
+
+    /**
+     * Human-readable description exposed to the model.
+     *
+     * Describe when the model should propose instead of acting — the model
+     * chooses tools from these descriptions alone.
+     */
+    public function description(): string
+    {
+        return 'Propose an action for the user to review and accept. Use this instead of mutating anything directly.';
+    }
+
+    /**
+     * JSON schema describing the tool input.
+     *
+     * @param  JsonSchema  $schema  The schema factory provided by the SDK.
+     * @return array<string, mixed> The schema definition array.
+     */
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'type' => $schema->string()->description('Host-defined proposal type, e.g. add_shopping_items.'),
+            'payload' => $schema->string()->description('JSON-encoded payload of the proposed action.'),
+            'reason' => $schema->string()->nullable()->description('Why this action is proposed, shown to the user.'),
+        ];
+    }
+
+    /**
+     * Record the pending proposal.
+     *
+     * Invalid model input (bad type format, malformed payload JSON) throws
+     * a ValidationException — surfaces as a failed tool call, never a
+     * corrupted row. Authorisation needs no extra checks here: the user and
+     * conversation come from the server-side execution context, never from
+     * the model.
+     *
+     * @param  Request  $request  The tool invocation request from the model.
+     */
+    public function handle(Request $request): string
+    {
+        $payload = json_decode($request->string('payload')->toString(), true);
+
+        $proposal = AiActionProposal::createValidated([
+            'user_id' => $this->context->userId,
+            'conversation_id' => $this->context->conversationId,
+            'type' => $request->string('type'),
+            'payload' => is_array($payload) ? $payload : [],
+            'reason' => $request->string('reason'),
+        ]);
+
+        return $proposal->toJson();
+    }
+}
