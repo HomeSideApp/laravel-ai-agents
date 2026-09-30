@@ -145,4 +145,15 @@ class ModelsDevModel extends Model
 
         return $modalities !== null && in_array($modality, $modalities, true);
     }
+
+    /**
+     * Use the central catalog connection so the reference catalog lives on
+     * a dedicated database (configured via `ai-agents.catalog.connection`).
+     */
+    public function getConnectionName(): ?string
+    {
+        $connection = config('ai-agents.catalog.connection');
+
+        return is_string($connection) && $connection !== '' ? $connection : null;
+    }
 }

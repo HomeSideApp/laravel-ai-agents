@@ -96,4 +96,19 @@ class ModelsDevProvider extends Model
     {
         return $query->where('slug', $slug);
     }
+
+    /**
+     * Use the central catalog connection so the reference catalog lives on
+     * a dedicated database (configured via `ai-agents.catalog.connection`).
+     *
+     * In `database` isolation mode the package auto-sets this to `'central'`,
+     * keeping the catalog on the central BD while tenant queries run against
+     * the tenant's own database.
+     */
+    public function getConnectionName(): ?string
+    {
+        $connection = config('ai-agents.catalog.connection');
+
+        return is_string($connection) && $connection !== '' ? $connection : null;
+    }
 }
