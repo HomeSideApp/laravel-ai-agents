@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Tenancy;
 
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -25,6 +26,18 @@ final class NullTenantResolver implements ResolvesTenant
     public function enabled(): bool
     {
         return false;
+    }
+
+    /**
+     * Report the isolation mode as "none".
+     *
+     * @return TenantIsolation::None Always the none variant; consumers that
+     *                               check isolation() will skip all tenant
+     *                               logic.
+     */
+    public function isolation(): TenantIsolation
+    {
+        return TenantIsolation::None;
     }
 
     /**

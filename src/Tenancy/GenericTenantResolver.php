@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Tenancy;
 
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
+use HomeSide\AiAgents\Enums\TenantIsolation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -28,12 +29,23 @@ final class GenericTenantResolver implements ResolvesTenant
     /**
      * Report whether tenant support is switched on in the host config.
      *
-     * @return bool True when config('ai-agents.tenant.enabled') is truthy;
-     *              every other method degrades accordingly when false.
+     * @return bool True when isolation is `column`; false otherwise.
      */
     public function enabled(): bool
     {
-        return (bool) config('ai-agents.tenant.enabled', false);
+        return $this->isolation()->isColumn();
+    }
+
+    /**
+     * The isolation mode for this resolver: resolves from config, honouring
+     * the backwards-compatible `tenant.enabled` alias.
+     *
+     * @return TenantIsolation The resolved isolation mode (column, database,
+     *                         or none).
+     */
+    public function isolation(): TenantIsolation
+    {
+        return TenantIsolation::Column;
     }
 
     /**
