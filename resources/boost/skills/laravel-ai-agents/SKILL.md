@@ -188,7 +188,73 @@ Use an SDK Tool instead when data is large, optional, expensive, or should be qu
 
 ### Action proposals (human-in-the-loop)
 
-When an agent must not mutate host data directly, its tool records a pending `AiActionProposal` instead of acting. Extend the published `ActionProposalTool` stub (tag `ai-agents-stubs`): the tool requires an `AiExecutionContextData` — an empty context is rejected, so proposals are never created without a user identity — persists through the package's validated writes, and leaves acceptance and execution to host-side actions. Proposal types and handlers are domain-specific: the model proposes, a human decides.
+Use a proposal when an agent must **not** mutate host data directly. Its tool records a pending `AiActionProposal` instead of acting; a human decides; a registered handler executes. Prefer a direct write tool only for low-risk, deterministic side effects (see the README's mutation-mode table).
+
+Extend the published `ActionProposalTool` stub (tag `ai-agents-stubs`): the tool requires an `AiExecutionContextData` — an empty context is rejected, so a proposal is never created without a user identity — and reads the user, conversation and `runId` from it, never from the model.
+
+**Create** — `createValidated()` (no source/run) or `createValidatedWithSource($attributes, $source, $aiRunId)` to link a morph `source` and the generating AI run:
+
+```php
+$proposal = AiActionProposal::createValidatedWithSource(
+    attributes: [
+        'user_id' => $context->userId,
+        'conversation_id' => $context->conversationId,
+        'type' => 'add_shopping_items',   // ^[a-z0-9_]+$ — host slug, never an enum
+        'payload' => ['list_id' => '...', 'items' => [...]],
+        'reason' => 'You asked to add milk.',
+        'expires_at' => now()->addDay(),  // optional TTL
+    ],
+    source: $workflowNodeRun,             // nullable morph source
+    aiRunId: $context->runId,             // nullable AiRun UUID → ai_run_id
+);
+```
+
+**Decide** — always go through `ProposalDecisions::decide()` (atomic, authorised):
+
+```php
+use HomeSide\AiAgents\Proposals\ProposalDecisions;
+
+$decided = ProposalDecisions::instance()->decide(
+    proposal: $proposal,
+    userId: (string) $request->user()->id,
+    decision: ProposalDecisions::DECISION_ACCEPT, // or DECISION_REJECT
+    payload: $amendedPayload,                      // accept only, nullable
+    note: 'Adjusted quantity',                      // nullable
+);
+```
+
+Signature: `decide(AiActionProposal $proposal, int|string $userId, string $decision, ?array $payload = null, ?string $note = null): bool`. It returns `false` (no exception) when the proposal is not `pending`, is already decided, or has expired. It throws `InvalidArgumentException` (bad decision), `AuthorizationException` (not allowed) or `ValidationException` (bad amended payload). **Do not call `$proposal->accept()` / `reject()` from host code** — the no-`$deciderId` forms are deprecated; the model methods are low-level primitives that skip handler validation.
+
+**Authorize** — the default is owner-only (`OwnerOnlyProposalAuthorizer`). Implement `HomeSide\AiAgents\Contracts\AuthorizesProposalDecisions` (`canDecide()`, `applyDecisionScope()`) and set `proposals.authorizer`:
+
+```php
+'proposals' => [
+    'authorizer' => App\Ai\WorkflowApprovalAuthorizer::class, // e.g. permission "workflow-approvals.decide"
+    'handlers' => [App\Ai\Proposals\AddShoppingItemsHandler::class],
+    'execute' => env('AI_AGENTS_PROPOSALS_EXECUTE', 'queue'), // queue|sync|none
+    'expire_schedule_enabled' => env('AI_AGENTS_PROPOSALS_EXPIRE_SCHEDULE', true),
+    'expire_every' => env('AI_AGENTS_PROPOSALS_EXPIRE_EVERY', 'everyFiveMinutes'),
+],
+```
+
+List what a user can decide with `AiActionProposal::query()->awaitingDecisionBy($userId)` (pending + the authorizer's scope).
+
+**Handle** — implement `HomeSide\AiAgents\Contracts\ProposalHandler` (`type()`, `rules()`, `execute()`) and register the class-string in `proposals.handlers` (same mechanic as `agents`/`modules`; duplicate `type` values are rejected). `rules()` use dot-notation (`'payload.items' => 'required|array'`). With a registered handler and `execute` = `queue`/`sync`, `ExecuteActionProposalJob` performs the idempotent `accepted → executing → executed|failed` transition and writes `execution_result` / `execution_error` / `executed_at`. With `execute` = `none` or no handler, the proposal stays `accepted`.
+
+**Close loops** — the six `ActionProposal*` events fire exactly once per transition. A host listener can complete a workflow node when `$event->proposal->source_type === 'workflow_node_run'` (accept → `approved`, reject → `rejected`, expire → `expired`).
+
+**Expire** — `AiActionProposal::expireStale()` (row by row + `ActionProposalExpired`) runs via `php artisan ai-agents:proposals:expire`, scheduled every 5 minutes when `expire_schedule_enabled`. In `database` mode the command iterates tenants through `RunsForEachTenant` and the execution job carries `tenant.current_key`.
+
+**Checklist — to do X, use Y**
+
+- Record a proposal → the `ActionProposalTool` stub / `AiActionProposal::createValidatedWithSource()`.
+- Link a proposal to its origin/run → the `$source` and `$aiRunId` arguments (`source_type`/`source_id`, `ai_run_id`).
+- Approve or reject a proposal → `ProposalDecisions::decide()` (never `accept()`/`reject()` directly).
+- Show a user their decidable proposals → `awaitingDecisionBy($userId)`.
+- Let non-owners or workflow approvers decide → a custom `AuthorizesProposalDecisions` in `proposals.authorizer`.
+- Execute an approved action → a `ProposalHandler` in `proposals.handlers` + `execute` = `queue`/`sync`.
+- React to a decision/execution → the `ActionProposal*` events.
+- Retire stale proposals → `expireStale()` / `ai-agents:proposals:expire` (`expire_every`).
 
 ## Modules and synchronization
 
