@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents;
 
 use HomeSide\AiAgents\Configuration\AgentConfigurationResolver;
+use HomeSide\AiAgents\Console\Commands\ExpireProposalsCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
@@ -13,9 +14,11 @@ use HomeSide\AiAgents\Console\Commands\SyncAgentsCommand;
 use HomeSide\AiAgents\Console\Commands\UsageConsolidateCommand;
 use HomeSide\AiAgents\Context\ContextBuilder;
 use HomeSide\AiAgents\Context\ContextProvider;
+use HomeSide\AiAgents\Contracts\AuthorizesProposalDecisions;
 use HomeSide\AiAgents\Contracts\DomainAgent;
 use HomeSide\AiAgents\Contracts\InspectsPrompt;
 use HomeSide\AiAgents\Contracts\ModuleAiProvider;
+use HomeSide\AiAgents\Contracts\ProposalHandler;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Contracts\RunsForEachTenant;
 use HomeSide\AiAgents\Enums\TenantIsolation;
@@ -28,6 +31,9 @@ use HomeSide\AiAgents\ModelsDev\ModelsDevSynchronizer;
 use HomeSide\AiAgents\Privacy\ContentSharing;
 use HomeSide\AiAgents\Privacy\UserContentKeyManager;
 use HomeSide\AiAgents\Prompting\PromptCompositor;
+use HomeSide\AiAgents\Proposals\OwnerOnlyProposalAuthorizer;
+use HomeSide\AiAgents\Proposals\ProposalDecisions;
+use HomeSide\AiAgents\Proposals\ProposalHandlerRegistry;
 use HomeSide\AiAgents\Providers\AiProviderTester;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
 use HomeSide\AiAgents\Providers\ImageGenerationProviderTester;
@@ -225,6 +231,33 @@ final class AiServiceProvider extends ServiceProvider
             return $app->make(SingleContextRunner::class);
         });
 
+        // Proposal subsystem: authorizer singleton, handler registry singleton,
+        // and the decision service that composes both.
+        $this->app->singleton(ProposalHandlerRegistry::class);
+
+        $this->app->singleton(AuthorizesProposalDecisions::class, function (Application $app): AuthorizesProposalDecisions {
+            $customAuthorizer = config('ai-agents.proposals.authorizer');
+
+            if (is_string($customAuthorizer) && $customAuthorizer !== '' && class_exists($customAuthorizer)) {
+                if (! is_a($customAuthorizer, AuthorizesProposalDecisions::class, true)) {
+                    throw new \InvalidArgumentException(
+                        "Registered proposal authorizer [{$customAuthorizer}] must implement ".AuthorizesProposalDecisions::class.'.'
+                    );
+                }
+
+                return $app->make($customAuthorizer);
+            }
+
+            return $app->make(OwnerOnlyProposalAuthorizer::class);
+        });
+
+        $this->app->singleton(ProposalDecisions::class, function (Application $app): ProposalDecisions {
+            return new ProposalDecisions(
+                $app->make(AuthorizesProposalDecisions::class),
+                $app->make(ProposalHandlerRegistry::class),
+            );
+        });
+
         $this->commands([
             FirewallTrainCommand::class,
             FirewallEvaluateCommand::class,
@@ -232,6 +265,7 @@ final class AiServiceProvider extends ServiceProvider
             ModelsDevSyncCommand::class,
             UsageConsolidateCommand::class,
             SyncAgentsCommand::class,
+            ExpireProposalsCommand::class,
         ]);
     }
 
@@ -295,11 +329,13 @@ final class AiServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../stubs' => base_path('stubs/ai-agents'),
         ], 'ai-agents-stubs');
-
         $this->registerHostComponents();
         $this->autoSyncAgents();
+        $this->registerProposalHandlers();
+
         $this->scheduleModelsDevSync();
         $this->scheduleUsageConsolidation();
+        $this->scheduleProposalsExpiry();
     }
 
     /**
@@ -321,6 +357,41 @@ final class AiServiceProvider extends ServiceProvider
             $schedule->command('ai-agents:usage:consolidate')
                 ->dailyAt((string) config('ai-agents.usage.schedule_at', '03:00'))
                 ->withoutOverlapping(120)
+                ->onOneServer()
+                ->runInBackground();
+        });
+    }
+
+    /**
+     * Register the proposals expiry checker on the schedule.
+     *
+     * Runs at config('ai-agents.proposals.expire_every') (default 'everyFiveMinutes')
+     * with overlap protection. Hosts can disable it via
+     * config('ai-agents.proposals.expire_schedule_enabled').
+     */
+    private function scheduleProposalsExpiry(): void
+    {
+        if (! (bool) config('ai-agents.proposals.expire_schedule_enabled', true)) {
+            return;
+        }
+
+        $this->app->booted(function (Application $app): void {
+            $schedule = $app->make(Schedule::class);
+            $frequency = (string) config('ai-agents.proposals.expire_every', 'everyFiveMinutes');
+
+            $event = $schedule->command('ai-agents:proposals:expire');
+
+            // Dynamic frequency: call the method if it exists on the schedule event,
+            // otherwise fall back to everyFiveMinutes.
+            if (method_exists($event, $frequency)) {
+                $event->{$frequency}();
+            } else {
+                // Handle cron-like expressions or other patterns.
+                $event->cron($frequency);
+            }
+
+            $event
+                ->withoutOverlapping(10)
                 ->onOneServer()
                 ->runInBackground();
         });
@@ -382,6 +453,35 @@ final class AiServiceProvider extends ServiceProvider
         } catch (\Throwable) {
             // Table does not exist yet (migrations pending) or the database
             // is unreachable: leave boot clean, the row is created later.
+        }
+    }
+
+    /**
+     * Register proposal handlers declared in config('ai-agents.proposals.handlers').
+     *
+     * Idempotent: re-booting simply re-registers (same instances are bound
+     * in the container so the second pass uses the existing singleton).
+     */
+    private function registerProposalHandlers(): void
+    {
+        $registry = $this->app->make(ProposalHandlerRegistry::class);
+
+        // Config values are untyped (mixed); narrow each entry to a handler
+        // class-string so the container `make()` call is statically sound.
+        /** @var array<class-string> $handlerClasses */
+        $handlerClasses = (array) config('ai-agents.proposals.handlers', []);
+
+        foreach ($handlerClasses as $handlerClass) {
+            if (! is_string($handlerClass) || ! is_a($handlerClass, ProposalHandler::class, true)) {
+                throw new \InvalidArgumentException(
+                    "Registered proposal handler [{$handlerClass}] must implement ".ProposalHandler::class.'.'
+                );
+            }
+
+            /** @var ProposalHandler $handler */
+            $handler = $this->app->make($handlerClass);
+
+            $registry->register($handler);
         }
     }
 

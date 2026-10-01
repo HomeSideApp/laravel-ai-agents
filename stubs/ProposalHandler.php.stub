@@ -1,0 +1,73 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{namespace}};
+
+use HomeSide\AiAgents\Contracts\ProposalHandler as ProposalHandlerContract;
+use HomeSide\AiAgents\Models\AiActionProposal;
+
+/**
+ * Stub for a proposal handler.
+ *
+ * Implements the ProposalHandler contract for a specific proposal type.
+ * Each handler maps to a single proposal `type` (must match `^[a-z0-9_]+$`).
+ *
+ * To use:
+ * 1. Replace `{{namespace}}` and `{{class}}`.
+ * 2. Update `type()` to return the proposal type string.
+ * 3. Define payload validation rules in `rules()`.
+ * 4. Implement the actual execution logic in `execute()`.
+ * 5. Register the handler in config('ai-agents.proposals.handlers').
+ */
+class {{class}} implements ProposalHandlerContract
+{
+    /**
+     * The proposal type this handler processes.
+     *
+     * Must match `^[a-z0-9_]+$` (lowercase slug-like, no dots).
+     *
+     * @return string
+     */
+    public function type(): string
+    {
+        return '{{type}}';
+    }
+
+    /**
+     * Validation rules for the proposal payload.
+     *
+     * Rules follow the standard Laravel validation format.
+     * Return an empty array for no additional validation.
+     *
+     * @return array<string, mixed>
+     */
+    public function rules(): array
+    {
+        // TODO: Define payload validation rules.
+        // Example:
+        // return [
+        //     'items' => 'required|array|min:1',
+        //     'items.*.name' => 'required|string|max:255',
+        // ];
+
+        return [];
+    }
+
+    /**
+     * Execute the proposed action.
+     *
+     * Called by the execution job after the proposal has been accepted.
+     * Must return a serialisable array representing the execution result.
+     *
+     * @param  AiActionProposal  $proposal  The accepted proposal to execute.
+     * @return array<string, mixed> The serialisable execution result.
+     */
+    public function execute(AiActionProposal $proposal): array
+    {
+        // TODO: Implement the actual action logic.
+        // Example: mutate data, call external APIs, queue other jobs...
+
+        return ['ok' => true];
+    }
+}

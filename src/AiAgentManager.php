@@ -157,6 +157,13 @@ class AiAgentManager
             $this->recorder->applyRetention($run, $providerPrivacy);
         }
         $run->update(['provider_id' => $provider->id, 'provider_name' => $providerName, 'model_name' => $modelName]);
+
+        // 9b. Enrich the execution context with the run UUID so that tools
+        // built from ActionProposalTool.php.stub can pass ai_run_id when
+        // creating proposals via createValidatedWithSource().
+        // NOTE: $context is passed to AcceptsExecutionContext::setExecutionContext()
+        // below as well, so the enriched copy must be used consistently.
+        $context = $context->withRunId($run->id);
         $start = microtime(true);
 
         try {

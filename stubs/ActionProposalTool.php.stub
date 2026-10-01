@@ -70,13 +70,17 @@ class {{class}} implements Tool
     {
         $payload = json_decode($request->string('payload')->toString(), true);
 
-        $proposal = AiActionProposal::createValidated([
-            'user_id' => $this->context->userId,
-            'conversation_id' => $this->context->conversationId,
-            'type' => $request->string('type'),
-            'payload' => is_array($payload) ? $payload : [],
-            'reason' => $request->string('reason'),
-        ]);
+        $proposal = AiActionProposal::createValidatedWithSource(
+            attributes: [
+                'user_id' => $this->context->userId,
+                'conversation_id' => $this->context->conversationId,
+                'type' => $request->string('type'),
+                'payload' => is_array($payload) ? $payload : [],
+                'reason' => $request->string('reason'),
+            ],
+            source: null,
+            aiRunId: $this->context->runId,
+        );
 
         return $proposal->toJson();
     }

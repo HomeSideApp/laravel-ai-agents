@@ -19,6 +19,8 @@ final readonly class AiExecutionContextData
      * @param  int|string|null  $tenantId  The optional tenant identifier (integer or UUID).
      * @param  int|string|null  $conversationId  The optional conversation identifier.
      * @param  list<int|string>  $participantUserIds
+     * @param  string|null  $runId  The UUID of the AiRun this context belongs to, if any.
+     * @param  array<string, mixed>  $extra  Extra context data.
      */
     public function __construct(
         public int|string $userId,
@@ -30,6 +32,7 @@ final readonly class AiExecutionContextData
         public ?string $requestId = null,
         /** @var array<string, mixed> */
         public array $extra = [],
+        public ?string $runId = null,
     ) {}
 
     /**
@@ -52,9 +55,32 @@ final readonly class AiExecutionContextData
     }
 
     /**
+     * Clone with a run ID added.
+     *
+     * Useful when the context is built before the AiRun is created so that
+     * the manager can chain `.withRunId($run->id)` after creating the run.
+     *
+     * @param  string  $runId  The run UUID.
+     */
+    public function withRunId(string $runId): self
+    {
+        return new self(
+            userId: $this->userId,
+            tenantId: $this->tenantId,
+            conversationId: $this->conversationId,
+            locale: $this->locale,
+            timezone: $this->timezone,
+            participantUserIds: $this->participantUserIds,
+            requestId: $this->requestId,
+            extra: $this->extra,
+            runId: $runId,
+        );
+    }
+
+    /**
      * Serialize to an array for logging/debugging.
      *
-     * @return array{user_id: int|string, tenant_id: int|string|null, conversation_id: int|string|null, locale: string, timezone: string}
+     * @return array{user_id: int|string, tenant_id: int|string|null, conversation_id: int|string|null, locale: string, timezone: string, run_id: string|null}
      */
     public function toArray(): array
     {
@@ -64,6 +90,7 @@ final readonly class AiExecutionContextData
             'conversation_id' => $this->conversationId,
             'locale' => $this->locale,
             'timezone' => $this->timezone,
+            'run_id' => $this->runId,
         ];
     }
 }
