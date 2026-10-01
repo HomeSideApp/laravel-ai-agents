@@ -19,7 +19,7 @@ use HomeSide\AiAgents\Tests\TestUser;
 use HomeSide\AiAgents\Tests\Unit\Fixtures\DummyAgent;
 use HomeSide\AiAgents\Tests\Unit\Fixtures\SdkBoundaryAgent;
 use Illuminate\Support\Facades\DB;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 
 /**
  * Agent-level privacy gate and privacy-driven content retention in
@@ -149,7 +149,7 @@ final class AiAgentManagerPrivacyGateTest extends TestCase
     public function test_manager_records_sdk_usage_provider_cost_and_attempt(): void
     {
         $sdkAgent = $this->registerSdkAgentWith(null);
-        $sdkAgent->usage = new Usage(promptTokens: 1000, completionTokens: 500, cacheReadInputTokens: 100);
+        $sdkAgent->usage = new TextUsage(inputTokens: 1000, outputTokens: 500, cacheReadInputTokens: 100);
         $provider = $this->makeProvider([
             'cost_input' => '2.000000',
             'cost_output' => '4.000000',

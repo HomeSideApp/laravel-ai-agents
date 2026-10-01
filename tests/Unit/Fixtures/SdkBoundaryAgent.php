@@ -8,10 +8,12 @@ use HomeSide\AiAgents\Contracts\AcceptsRuntimeConfiguration;
 use Illuminate\Broadcasting\Channel;
 use Laravel\Ai\Approvals\Decisions;
 use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\AgentInput;
 use Laravel\Ai\Enums\Lab;
+use Laravel\Ai\Messages\UserMessage;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 use Laravel\Ai\Responses\QueuedAgentResponse;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 use Stringable;
@@ -30,7 +32,7 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
      */
     public string $reply = 'boundary reply';
 
-    public ?Usage $usage = null;
+    public ?TextUsage $usage = null;
 
     /** @var array<string, int|float> */
     public array $runtimeConfiguration = [];
@@ -47,17 +49,17 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
     }
 
     public function prompt(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         array $attachments = [],
         Lab|array|string|null $provider = null,
         ?string $model = null,
         ?int $timeout = null,
     ): AgentResponse {
-        return new AgentResponse('test-invocation', $this->reply, $this->usage ?? new Usage, new Meta);
+        return new AgentResponse('test-invocation', $this->reply, $this->usage ?? new TextUsage, new Meta);
     }
 
     public function stream(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         array $attachments = [],
         Lab|array|string|null $provider = null,
         ?string $model = null,
@@ -67,7 +69,7 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
     }
 
     public function queue(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         array $attachments = [],
         Lab|array|string|null $provider = null,
         ?string $model = null,
@@ -76,7 +78,7 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
     }
 
     public function broadcast(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         Channel|array $channels,
         array $attachments = [],
         bool $now = false,
@@ -87,7 +89,7 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
     }
 
     public function broadcastNow(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         Channel|array $channels,
         array $attachments = [],
         Lab|array|string|null $provider = null,
@@ -97,7 +99,7 @@ final class SdkBoundaryAgent extends DummyAgent implements AcceptsRuntimeConfigu
     }
 
     public function broadcastOnQueue(
-        Decisions|string $prompt,
+        AgentInput|UserMessage|Decisions|string $prompt,
         Channel|array $channels,
         array $attachments = [],
         Lab|array|string|null $provider = null,

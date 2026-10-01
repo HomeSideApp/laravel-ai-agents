@@ -216,7 +216,7 @@ class AiAgentManager
 
             $latencyMs = (int) round((microtime(true) - $start) * 1000);
             $usage = $response->usage;
-            $usageKnown = $usage->promptTokens > 0 || $usage->completionTokens > 0
+            $usageKnown = $usage->inputTokens > 0 || $usage->outputTokens > 0
                 || $usage->cacheReadInputTokens > 0 || $usage->cacheWriteInputTokens > 0;
 
             // Preserve structured output because its text representation may be empty.
@@ -255,9 +255,9 @@ class AiAgentManager
                 reply: $structured ?? $response->text,
                 structured: $structured !== null,
                 usage: new AiUsageData(
-                    inputTokens: $usageKnown ? $usage->promptTokens : null,
-                    outputTokens: $usageKnown ? $usage->completionTokens : null,
-                    totalTokens: $usageKnown ? $usage->promptTokens + $usage->completionTokens : null,
+                    inputTokens: $usageKnown ? $usage->inputTokens : null,
+                    outputTokens: $usageKnown ? $usage->outputTokens : null,
+                    totalTokens: $usageKnown ? $usage->inputTokens + $usage->outputTokens : null,
                     latencyMs: $latencyMs,
                     cachedTokens: $usageKnown ? $usage->cacheReadInputTokens : null,
                 ),
