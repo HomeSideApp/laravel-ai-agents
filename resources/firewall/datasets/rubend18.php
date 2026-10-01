@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 /*
 |--------------------------------------------------------------------------
 | Dataset adapter: rubend18/ChatGPT-Jailbreak-Prompts
