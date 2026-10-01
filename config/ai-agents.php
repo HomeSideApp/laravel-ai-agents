@@ -265,6 +265,47 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Action Proposals — Decision Lifecycle
+    |--------------------------------------------------------------------------
+    |
+    | Controls the human-in-the-loop approval workflow for agent-generated
+    | action proposals. The cycle flows:
+    |
+    |   pending → accepted → executing → executed / failed
+    |       ↘ rejected          ↗
+    |       ↘ expired (via schedule)
+    |
+    | authorizer: class-string implementing \HomeSide\AiAgents\Contracts\AuthorizesProposalDecisions.
+    |              Resolves user identity checks before a decision is recorded.
+    |              Defaults to OwnerOnlyProposalAuthorizer (subtask 2).
+    |
+    | handlers: array of class-strings implementing \HomeSide\AiAgents\Contracts\ProposalHandler.
+    |           Each handler maps to a proposal `type` and provides payload rules + execute().
+    |           Registered in the provider and looked up by the execution job.
+    |
+    | execute: controls how an accepted proposal with a registered handler is dispatched.
+    |          - `queue` (default): dispatches ExecuteActionProposalJob to the queue.
+    |          - `sync`: executes synchronously (dispatchSync).
+    |          - `none`: no automatic execution; host handles the accepted proposal manually.
+    |
+    | expire_schedule_enabled: whether the scheduler should run the proposals:expire
+    |                          command regularly. Default true (every 5 minutes).
+    |
+    | expire_every: scheduling expression. Accepts Laravel frequency strings
+    |               ('everyFiveMinutes') or a cron expression.
+    |
+    */
+
+    'proposals' => [
+        'authorizer' => env('AI_AGENTS_PROPOSALS_AUTHORIZER'),             // class-string|null (default: OwnerOnlyProposalAuthorizer)
+        'handlers' => [],                                                  // class-strings of ProposalHandler
+        'execute' => env('AI_AGENTS_PROPOSALS_EXECUTE', 'queue'),          // queue|sync|none
+        'expire_schedule_enabled' => env('AI_AGENTS_PROPOSALS_EXPIRE_SCHEDULE', true),
+        'expire_every' => env('AI_AGENTS_PROPOSALS_EXPIRE_EVERY', 'everyFiveMinutes'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Provider Endpoint Policy (SSRF protection)
     |--------------------------------------------------------------------------
     |
