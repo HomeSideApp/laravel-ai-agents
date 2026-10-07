@@ -79,6 +79,7 @@ directory.
 | `modules` | Array of `ModuleAiProvider` class-strings to register. |
 | `context_providers` | Array of `ContextProvider` class-strings to register. |
 | `proposals` | Human-in-the-loop action proposal lifecycle — see [Action proposals](#action-proposals-human-in-the-loop). |
+| `conversations` | Persistent chat memory for conversational agents — see [Conversation memory](#conversation-memory). |
 | `injection_patterns` | Regex list used by `PromptCompositor` guardrails; extend or replace per host. |
 
 ## Registering Agents and Modules
@@ -707,6 +708,97 @@ No input firewall is complete. For defence in depth:
 - **Structural defences** — the prompt hierarchy (platform policy is
   authoritative) and server-side authorisation inside every tool remain the
   barriers that cannot be bypassed by input tricks.
+
+## Conversation memory
+
+Agents that declare memory through Laravel AI's native
+`RemembersConversations` contract can keep context between executions. The
+package takes over the SDK's `ConversationStore` so the transcript is stored,
+encrypted and isolated under its own control — no parallel
+`agent_conversations` table is created.
+
+```text
+ai_conversations          ← canonical conversation
+    ├── ai_conversation_messages   ← durable transcript (encrypted)
+    ├── ai_runs                     ← telemetry (independent lifecycle)
+    └── ai_action_proposals
+```
+
+**Only** agents implementing `RemembersConversations` (or using the SDK
+trait) carry memory. Generators, extractors and other stateless agents keep
+working as before; passing a conversation id to one of them throws
+`ConversationNotSupportedException` instead of being ignored.
+
+### Enabling it
+
+```php
+// config/ai-agents.php
+'conversations' => [
+    'enabled' => env('AI_AGENTS_CONVERSATIONS_ENABLED', false),
+    'storage' => ['mode' => env('AI_AGENTS_CONVERSATIONS_STORAGE_MODE', 'encrypted')],
+    'context' => ['max_messages' => 30],
+    'retention' => ['days' => null],          // null = keep until the user deletes
+    'titles' => ['strategy' => 'neutral'],    // never copy the first prompt to a plaintext column
+],
+```
+
+`enabled` defaults to `false` so existing installations are unaffected.
+Retention of **conversations** (`conversations.retention.days`) is separate
+from retention of **telemetry** (`usage.retention_days`): consolidating or
+deleting `AiRun` rows never touches the transcript, and vice versa.
+
+### Security (IDOR in depth)
+
+Three layers guard a conversation:
+
+```text
+HomeSide HTTP      → AiConversationPolicy + permissions   (host)
+laravel-ai-agents  → ConversationAccessGuard              (package)
+tenant isolation   → none / column / database
+```
+
+`ConversationAccessGuard` resolves owner + agent + tenant in a **single
+query**:
+
+```php
+AiConversation::query()
+    ->whereKey($conversationId)
+    ->forUser($context->userId)
+    ->forAgent($agentKey)
+    ->forTenant($resolvedTenant)   // column mode only
+    ->firstOrFail();
+```
+
+There is deliberately no `find($id)` followed by a permission check. A
+missing conversation and an inaccessible one both raise the same
+`ConversationNotFoundException`, so UUIDs never become an enumeration
+oracle. Never call `$sdkAgent->continue($id)` without crossing the guard.
+
+### Encryption & crypto-shredding
+
+The whole message payload (content, attachments, **steps** with tool calls,
+tool arguments and tool results, plus meta) is envelope-encrypted with the
+owner's per-user DEK through the shared `UserContentCipher`; the title is
+protected by the same mechanism. Destroying a user's DEK crypto-shreds both
+their run content and their chats. `RunContentCast` and the conversation
+casts share the cipher, so there is a single cryptographic implementation.
+
+`logging.retention=...=none` only governs `AiRun` telemetry: it never
+disables functional, user-requested chat memory.
+
+### Result DTO
+
+`AiExecutionResultData` exposes `conversationId`, `userMessageId` and
+`assistantMessageId`, so HTTP layers never inspect SDK internals:
+
+```text
+HTTP → AiExecutionContextData → AiAgentManager → AiExecutionResultData → HTTP resource
+```
+
+The host passes a conversation id through
+`AiExecutionContextData::$conversationId` (or `withConversationId()`); the
+manager authorises it, records the run against it and wires the SDK
+continuation.
 
 ## Testing providers
 
