@@ -99,8 +99,42 @@ final class ProviderPrivacySelectionTest extends TestCase
             requiredPrivacyLevel: PrivacyLevel::Local,
         ));
 
-        // Providers DO exist for the capability, just not private enough.
-        $this->assertTrue($resolver->hasCapabilityCandidateIgnoringPrivacy(
+        // A candidate DOES exist that satisfies everything except privacy.
+        $this->assertTrue($resolver->hasCandidateRejectedOnlyByRequiredPrivacy(
+            'assistant',
+            Capability::Embeddings,
+            userId: 1,
+        ));
+    }
+
+    public function test_candidate_blocked_by_fallback_policy_is_not_reported_as_privacy(): void
+    {
+        // Anchor: local_only, no embeddings.
+        $anchor = $this->makeProvider([
+            'scope' => ['user' => 1],
+            'privacy_level' => 'local',
+            'fallback_policy' => 'local_only',
+        ]);
+
+        // Candidate: self-hosted embeddings, which fallback policy forbids.
+        $candidate = $this->makeProvider([
+            'scope' => 'global',
+            'privacy_level' => 'self_hosted',
+        ]);
+        $this->addEmbeddingDefault($candidate, 'self-hosted-embed');
+
+        $resolver = $this->app->make(ProviderResolver::class);
+
+        $this->assertNull($resolver->resolveForCapability(
+            'assistant',
+            Capability::Embeddings,
+            userId: 1,
+            requiredPrivacyLevel: PrivacyLevel::SelfHosted,
+        ));
+
+        // The only candidate is rejected by the fallback policy, NOT by the
+        // privacy requirement, so it must not be reported as a privacy issue.
+        $this->assertFalse($resolver->hasCandidateRejectedOnlyByRequiredPrivacy(
             'assistant',
             Capability::Embeddings,
             userId: 1,
