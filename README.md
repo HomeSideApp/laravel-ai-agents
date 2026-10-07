@@ -837,9 +837,10 @@ UUID cannot become an IDOR.
 
 `requiredPrivacyLevel` participates in the SELECTION, not just the final
 check: a lower-scope provider that satisfies it wins over a higher-scope one
-that does not, and a pinned provider never bypasses it. When providers exist
-for the capability but none is private enough, the resolver reports it
-(`hasCapabilityCandidateIgnoringPrivacy()`) and `EmbeddingManager` raises a
+that does not, and a pinned provider never bypasses it. When the ONLY reason
+nothing was selected is the privacy requirement, the resolver reports it
+(`hasCandidateRejectedOnlyByRequiredPrivacy()`, which applies every other
+check including the fallback policy) and `EmbeddingManager` raises a
 `PrivacyViolationException` that names the real cause; otherwise it raises
 `NoEmbeddingProviderException`.
 
@@ -870,8 +871,12 @@ within the window, cascading to their messages and never touching `AiRun`.
 A null window keeps chats until the user deletes them and needs no cron.
 
 Continuing a conversation refreshes its activity timestamp (after
-authorisation, so a foreign id can never trigger a write), which means a
-conversation being used right now can never be pruned as abandoned.
+authorisation, so a foreign id can never trigger a write), then re-reads the
+row so a run never proceeds on a conversation that was deleted in the
+meantime. The pruner, for its part, re-reads every candidate under a row
+lock just before deleting it and skips any row whose timestamp was refreshed
+after the candidate scan — closing the race between "continue" and "prune"
+without holding a transaction during the model call.
 
 ## Conversation memory
 
