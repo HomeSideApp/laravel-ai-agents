@@ -75,6 +75,46 @@ final class EmbeddingProviderTesterTest extends TestCase
         $this->assertArrayHasKey('dimensions', $result->toArray());
     }
 
+    public function test_test_model_rejects_a_model_from_another_provider(): void
+    {
+        Embeddings::fake();
+
+        $providerA = $this->makeProvider();
+        $providerB = $this->makeProvider();
+        $modelB = AiProviderModel::create([
+            'ai_provider_id' => $providerB->id,
+            'model' => 'foreign-embed',
+            'enabled' => true,
+            'capabilities_override' => ['embeddings'],
+            'embedding_dimensions' => 4,
+        ]);
+
+        $this->expectException(NoProviderModelException::class);
+
+        $this->app->make(EmbeddingProviderTester::class)->testModel($providerA, $modelB);
+    }
+
+    public function test_test_model_allows_a_model_without_detected_capability(): void
+    {
+        Embeddings::fake();
+
+        $provider = $this->makeProvider();
+
+        // No capabilities_detected/override yet: the probe is what discovers
+        // the capability, so it must be allowed.
+        $model = AiProviderModel::create([
+            'ai_provider_id' => $provider->id,
+            'model' => 'undetected-embed',
+            'enabled' => false,
+            'embedding_dimensions' => 4,
+        ]);
+
+        $result = $this->app->make(EmbeddingProviderTester::class)->testModel($provider, $model);
+
+        $this->assertSame('ok', $result->status);
+        $this->assertSame(4, $result->dimensions);
+    }
+
     public function test_provider_without_embeddings_model_throws(): void
     {
         Embeddings::fake();

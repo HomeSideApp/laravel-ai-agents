@@ -63,6 +63,20 @@ final class EmbeddingManagerTest extends TestCase
     }
 
     /**
+     * Create a provider with a default embeddings model already wired and
+     * registered with the SDK.
+     */
+    private function makeProviderWithEmbeddings(string $model = 'embed', int $dimensions = 3, array $overrides = []): AiProvider
+    {
+        $provider = $this->makeProvider($overrides);
+        $embedding = $this->makeEmbeddingModel($provider, $model, $dimensions);
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $embedding);
+        $this->registerDynamic($provider);
+
+        return $provider;
+    }
+
+    /**
      * Register a dynamic provider so the SDK can resolve it during the fake.
      */
     private function registerDynamic(AiProvider $provider): string
@@ -300,6 +314,86 @@ final class EmbeddingManagerTest extends TestCase
             inputs: ['x'],
             requiredPrivacyLevel: PrivacyLevel::Local,
         ));
+    }
+
+    public function test_batch_size_zero_is_rejected_by_the_request_dto(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a'],
+            batchSize: 0,
+        );
+    }
+
+    public function test_batch_size_negative_is_rejected_by_the_request_dto(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a'],
+            batchSize: -1,
+        );
+    }
+
+    public function test_invalid_configured_batch_size_is_rejected_by_the_manager(): void
+    {
+        Embeddings::fake();
+
+        config(['ai-agents.embeddings.batch_size' => 0]);
+
+        $this->makeProviderWithEmbeddings('embed', 3);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a'],
+        ));
+    }
+
+    public function test_batch_size_of_one_produces_one_call_per_input(): void
+    {
+        Embeddings::fake();
+
+        $provider = $this->makeProviderWithEmbeddings('embed', 3);
+
+        $result = $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a', 'b', 'c'],
+            batchSize: 1,
+        ));
+
+        $this->assertCount(3, $result->embeddings);
+        $this->assertNotNull($provider->id);
+    }
+
+    public function test_configured_batch_size_is_used_when_request_omits_it(): void
+    {
+        Embeddings::fake();
+
+        config(['ai-agents.embeddings.batch_size' => 25]);
+
+        $this->makeProviderWithEmbeddings('embed', 3);
+
+        $result = $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a', 'b'],
+        ));
+
+        $this->assertCount(2, $result->embeddings);
     }
 
     public function test_batch_size_splits_inputs_and_preserves_order(): void
