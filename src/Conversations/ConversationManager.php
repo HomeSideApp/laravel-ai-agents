@@ -77,7 +77,14 @@ final class ConversationManager
         ?string $userMessage = null,
     ): AiConversation {
         if ($conversationId !== null && $conversationId !== '') {
-            return $this->guard->authorize($conversationId, $agentKey, $context);
+            $conversation = $this->guard->authorize($conversationId, $agentKey, $context);
+
+            // Mark activity AFTER authorising (never before, so a foreign id
+            // cannot trigger writes) so a conversation being continued stops
+            // being a pruning candidate for the current retention window.
+            $conversation->touch();
+
+            return $conversation;
         }
 
         return $this->createFor($agentKey, $context, $userMessage);
