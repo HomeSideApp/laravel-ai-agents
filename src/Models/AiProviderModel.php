@@ -23,6 +23,7 @@ use Illuminate\Support\Carbon;
  * @property array<int, string>|null $capabilities_override The capabilities manually overridden for the model.
  * @property int|null $context_window The context window size of the model, if known.
  * @property int|null $max_output_tokens The maximum number of output tokens of the model, if known.
+ * @property int|null $embedding_dimensions The embedding vector length, when the model produces embeddings.
  * @property array<string, mixed>|null $metadata Additional metadata of the model.
  * @property Carbon|null $last_probed_at The timestamp when the model was last probed.
  * @property string|null $last_probe_status The status of the last probe of the model.
@@ -46,6 +47,7 @@ class AiProviderModel extends Model
         'capabilities_override',
         'context_window',
         'max_output_tokens',
+        'embedding_dimensions',
         'metadata',
         'last_probed_at',
         'last_probe_status',
@@ -65,6 +67,7 @@ class AiProviderModel extends Model
             'capabilities_override' => 'array',
             'context_window' => 'integer',
             'max_output_tokens' => 'integer',
+            'embedding_dimensions' => 'integer',
             'metadata' => 'array',
             'last_probed_at' => 'datetime',
         ];
@@ -83,10 +86,18 @@ class AiProviderModel extends Model
      * which in turn leaves the CapabilityResolver to fall back to the
      * driver baseline when this returns an empty set.
      *
-     * @return Capability[] The enum cases derived from the winning list;
-     *                      empty when neither source has data.
+     * Driver-baseline-only capabilities that require explicit per-model
+     * support (Embeddings, Reranking) are NEVER inferred here: they only
+     * appear when the model declares them through capabilities_detected or
+     * capabilities_override. This is what makes model selection for those
+     * capabilities safe.
+     *
+     * @param  string|null  $driver  The provider driver, used to resolve the
+     *                               baseline when no explicit data exists.
+     * @return Capability[] The enum cases the model supports; empty when
+     *                      neither source has data.
      */
-    public function effectiveCapabilities(): array
+    public function effectiveCapabilities(?string $driver = null): array
     {
         $override = $this->capabilities_override;
         $detected = $this->capabilities_detected;
@@ -99,15 +110,35 @@ class AiProviderModel extends Model
             return array_map(fn (string $c) => Capability::from($c), $detected);
         }
 
-        return [];
+        if ($driver === null) {
+            return [];
+        }
+
+        // Fall back to the driver baseline for its text features only;
+        // capabilities that require explicit model support stay out.
+        return array_values(array_filter(
+            Capability::driverBaseline($driver),
+            static fn (Capability $capability): bool => ! $capability->requiresExplicitModelSupport(),
+        ));
+    }
+
+    /**
+     * Whether this model supports the given capability (effective set).
+     *
+     * @param  string|null  $driver  The provider driver for baseline fallback.
+     */
+    public function supportsCapability(Capability $capability, ?string $driver = null): bool
+    {
+        return in_array($capability, $this->effectiveCapabilities($driver), true);
     }
 
     /**
      * Promote this model to the default of its provider.
      *
-     * Clears is_default on every sibling model of the same provider first,
-     * then flags this one — provider resolution's orderByDesc('is_default')
-     * depends on that uniqueness to pick the preferred model.
+     * @deprecated Use {@see ProviderModelDefaults::set()} with
+     *             Capability::Text instead: is_default is kept only for
+     *             backwards compatibility and is no longer the source of
+     *             truth for model resolution.
      */
     public function markAsDefault(): void
     {

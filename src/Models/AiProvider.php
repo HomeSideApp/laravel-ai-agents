@@ -79,6 +79,7 @@ use Illuminate\Validation\ValidationException;
  * @property Model|null $user The user the provider belongs to (resolved via config).
  * @property Model|null $creator The user who created the provider, if any.
  * @property Collection<int, AiProviderModel> $models The models exposed by the provider.
+ * @property Collection<int, AiProviderModelDefault> $modelDefaults The per-capability default models.
  * @property Collection<int, ModuleAiConfiguration> $moduleConfigurations The module configurations of the provider.
  */
 class AiProvider extends Model
@@ -354,6 +355,16 @@ class AiProvider extends Model
     public function models(): HasMany
     {
         return $this->hasMany(AiProviderModel::class, 'ai_provider_id');
+    }
+
+    /**
+     * The per-capability default models of this provider.
+     *
+     * @return HasMany<AiProviderModelDefault, $this>
+     */
+    public function modelDefaults(): HasMany
+    {
+        return $this->hasMany(AiProviderModelDefault::class, 'ai_provider_id');
     }
 
     /** @return HasMany<AiProviderModule, $this> */
