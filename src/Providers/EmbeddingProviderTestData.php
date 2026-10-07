@@ -8,34 +8,50 @@ use HomeSide\AiAgents\Enums\EmbeddingDimensionsSource;
 use HomeSide\AiAgents\Enums\EmbeddingProviderTestError;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
+use InvalidArgumentException;
 
 /**
  * Structured result of an embeddings probe.
  *
- * Keeps the probed dimensions, their source (verified or discovered) and a
- * machine-readable error as first-class values, so a successful probe can
- * seed embedding_dimensions and a failed one can drive a precise UI.
+ * Snapshots what was observed at probe time. The constructor is private and
+ * the factories enforce the invariants, so an inconsistent success (missing
+ * dimensions/source) or a success-carrying error is unrepresentable:
+ *
+ *   success → status=ok, dimensions>=1, source set, error=null
+ *   error   → status=error, error set, dimensions/source=null
  *
  * @implements Arrayable<string, mixed>
  */
 final readonly class EmbeddingProviderTestData implements Arrayable, Jsonable
 {
     /**
-     * A successful probe.
-     *
-     * @param  EmbeddingDimensionsSource  $dimensionsSource  Whether the
-     *                                                       dimensions were verified (already configured) or discovered.
+     * A successful probe whose dimensions were already configured and were
+     * verified against the provider response.
      */
-    public static function ok(
-        int $latencyMs,
-        int $dimensions,
-        EmbeddingDimensionsSource $dimensionsSource,
-    ): self {
+    public static function configured(int $latencyMs, int $dimensions): self
+    {
+        self::assertSuccessfulValues($latencyMs, $dimensions);
+
         return new self(
             status: 'ok',
             latencyMs: $latencyMs,
             dimensions: $dimensions,
-            dimensionsSource: $dimensionsSource,
+            dimensionsSource: EmbeddingDimensionsSource::Configured,
+        );
+    }
+
+    /**
+     * A successful probe whose dimensions were discovered from the response.
+     */
+    public static function discovered(int $latencyMs, int $dimensions): self
+    {
+        self::assertSuccessfulValues($latencyMs, $dimensions);
+
+        return new self(
+            status: 'ok',
+            latencyMs: $latencyMs,
+            dimensions: $dimensions,
+            dimensionsSource: EmbeddingDimensionsSource::Discovered,
         );
     }
 
@@ -53,7 +69,7 @@ final readonly class EmbeddingProviderTestData implements Arrayable, Jsonable
         );
     }
 
-    public function __construct(
+    private function __construct(
         public string $status,
         public int $latencyMs,
         public ?int $dimensions = null,
@@ -105,5 +121,19 @@ final readonly class EmbeddingProviderTestData implements Arrayable, Jsonable
     public function toJson($options = 0): string
     {
         return json_encode($this->toArray(), $options | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Enforce the successful-result invariants.
+     */
+    private static function assertSuccessfulValues(int $latencyMs, int $dimensions): void
+    {
+        if ($latencyMs < 0) {
+            throw new InvalidArgumentException('Probe latencyMs must be greater than or equal to zero.');
+        }
+
+        if ($dimensions < 1) {
+            throw new InvalidArgumentException('Probe dimensions must be greater than zero.');
+        }
     }
 }
