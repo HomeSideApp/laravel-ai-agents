@@ -73,8 +73,19 @@ final class EmbeddingManager
 
         /** @var list<string> $inputs */
         $inputs = array_values($request->inputs);
+
+        // The manager is the last security boundary: a misconfigured (or
+        // non-positive) batch size must fail loudly instead of silently
+        // sending every input in a single, unbounded provider call.
         $batchSize = $request->batchSize ?? (int) config('ai-agents.embeddings.batch_size', 50);
-        $batches = $batchSize > 0 ? array_chunk($inputs, $batchSize) : [$inputs];
+
+        if ($batchSize < 1) {
+            throw new InvalidArgumentException(
+                'Configured embedding batch size must be greater than zero.',
+            );
+        }
+
+        $batches = array_chunk($inputs, $batchSize);
 
         $vectors = [];
         $inputTokens = 0;

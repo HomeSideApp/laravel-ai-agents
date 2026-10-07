@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Embeddings;
 
 use HomeSide\AiAgents\Enums\PrivacyLevel;
+use InvalidArgumentException;
 
 /**
  * A request to embed one or more inputs.
@@ -42,5 +43,9 @@ final readonly class EmbeddingRequestData
         public ?int $timeout = null,
         public ?PrivacyLevel $requiredPrivacyLevel = null,
         public ?int $batchSize = null,
-    ) {}
+    ) {
+        if ($batchSize !== null && $batchSize < 1) {
+            throw new InvalidArgumentException('batchSize must be greater than zero.');
+        }
+    }
 }
