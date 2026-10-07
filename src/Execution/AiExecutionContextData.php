@@ -78,6 +78,31 @@ final readonly class AiExecutionContextData
     }
 
     /**
+     * Clone with a conversation ID set.
+     *
+     * Used by AiAgentManager once the conversation has been resolved and
+     * authorised, so the run is recorded against the canonical conversation
+     * and the SDK is told to continue it. Mirrors withRunId() and keeps the
+     * object readonly.
+     *
+     * @param  int|string  $conversationId  The authorised conversation UUID.
+     */
+    public function withConversationId(int|string $conversationId): self
+    {
+        return new self(
+            userId: $this->userId,
+            tenantId: $this->tenantId,
+            conversationId: $conversationId,
+            locale: $this->locale,
+            timezone: $this->timezone,
+            participantUserIds: $this->participantUserIds,
+            requestId: $this->requestId,
+            extra: $this->extra,
+            runId: $this->runId,
+        );
+    }
+
+    /**
      * Serialize to an array for logging/debugging.
      *
      * @return array{user_id: int|string, tenant_id: int|string|null, conversation_id: int|string|null, locale: string, timezone: string, run_id: string|null}

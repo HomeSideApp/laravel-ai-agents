@@ -520,6 +520,60 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Conversation Memory
+    |--------------------------------------------------------------------------
+    |
+    | Persistent, turn-by-turn memory for agents that implement the SDK's
+    | RemembersConversations contract. The package stays the source of truth
+    | for how a conversation is stored, protected and rebuilt, binding
+    | Laravel\Ai\Contracts\ConversationStore to PackageConversationStore so
+    | the SDK's native protocol (tool replay, paused turns, approvals) keeps
+    | working unchanged. Stateless agents (generators, extractors) are
+    | unaffected.
+    |
+    | enabled: master switch. Default false so existing installations keep
+    | their current behaviour until they opt in explicitly.
+    |
+    | storage.mode: how the durable transcript is stored.
+    | - encrypted: envelope encryption with the owner's per-user DEK
+    |   (crypto-shreddable; the default and the only recommended value).
+    | - plain: store the payload as-is (tests/diagnostics only).
+    |
+    | context.max_messages: upper bound applied on top of the limit the SDK
+    | asks for. Keeps the first implementation predictable; token-aware
+    | compaction is a future iteration.
+    |
+    | retention.days: null keeps conversations until the user deletes them.
+    | A number enables age-based pruning driven by the host's scheduler.
+    | Independent from usage.retention_days, which governs AiRun telemetry.
+    |
+    | titles.strategy: neutral (default) never copies the first prompt into a
+    | plaintext title; prompt derives it from the user message.
+    |
+    */
+
+    'conversations' => [
+        'enabled' => env('AI_AGENTS_CONVERSATIONS_ENABLED', false),
+
+        'storage' => [
+            'mode' => env('AI_AGENTS_CONVERSATIONS_STORAGE_MODE', 'encrypted'),
+        ],
+
+        'context' => [
+            'max_messages' => (int) env('AI_AGENTS_CONVERSATIONS_MAX_MESSAGES', 30),
+        ],
+
+        'retention' => [
+            'days' => env('AI_AGENTS_CONVERSATIONS_RETENTION_DAYS'),
+        ],
+
+        'titles' => [
+            'strategy' => env('AI_AGENTS_CONVERSATIONS_TITLE_STRATEGY', 'neutral'),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Host Injection Patterns
     |--------------------------------------------------------------------------
     |

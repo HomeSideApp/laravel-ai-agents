@@ -23,6 +23,9 @@ use HomeSide\AiAgents\Contracts\ProposalHandler;
 use HomeSide\AiAgents\Contracts\ProvidesSkills;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Contracts\RunsForEachTenant;
+use HomeSide\AiAgents\Conversations\ConversationAccessGuard;
+use HomeSide\AiAgents\Conversations\ConversationManager;
+use HomeSide\AiAgents\Conversations\PackageConversationStore;
 use HomeSide\AiAgents\Enums\TenantIsolation;
 use HomeSide\AiAgents\Execution\CostEstimator;
 use HomeSide\AiAgents\Execution\ExecutionRecorder;
@@ -31,6 +34,7 @@ use HomeSide\AiAgents\ModelsDev\CatalogPrefill;
 use HomeSide\AiAgents\ModelsDev\CatalogQuery;
 use HomeSide\AiAgents\ModelsDev\ModelsDevSynchronizer;
 use HomeSide\AiAgents\Privacy\ContentSharing;
+use HomeSide\AiAgents\Privacy\UserContentCipher;
 use HomeSide\AiAgents\Privacy\UserContentKeyManager;
 use HomeSide\AiAgents\Prompting\PromptCompositor;
 use HomeSide\AiAgents\Proposals\OwnerOnlyProposalAuthorizer;
@@ -59,6 +63,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
+use Laravel\Ai\Contracts\ConversationStore;
+use Laravel\Ai\Storage\DatabaseConversationStore;
 
 /**
  * Service provider of the homeside/laravel-ai-agents package.
@@ -205,9 +211,17 @@ final class AiServiceProvider extends ServiceProvider
         $this->app->singleton(CatalogPrefill::class);
         $this->app->singleton(CostEstimator::class);
 
-        // Privacy: per-user envelope keys and support-content grants.
+        // Privacy: per-user envelope keys, reusable cipher and support-content grants.
         $this->app->singleton(UserContentKeyManager::class);
+        $this->app->singleton(UserContentCipher::class);
         $this->app->singleton(ContentSharing::class);
+
+        // Conversations: canonical memory. The store is bound as a singleton
+        // so the manager and the SDK middleware share the same instance (and
+        // therefore the same per-execution agent context).
+        $this->app->singleton(ConversationAccessGuard::class);
+        $this->app->singleton(ConversationManager::class);
+        $this->app->singleton(PackageConversationStore::class);
         $this->app->singleton(ModelsDevSynchronizer::class, function (Application $app): ModelsDevSynchronizer {
             return new ModelsDevSynchronizer(
                 apiUrl: config('ai-agents.models_dev.api_url'),
@@ -360,6 +374,7 @@ final class AiServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../stubs' => base_path('stubs/ai-agents'),
         ], 'ai-agents-stubs');
+        $this->bindConversationStore();
         $this->registerHostComponents();
         $this->autoSyncAgents();
         $this->registerProposalHandlers();
@@ -391,6 +406,40 @@ final class AiServiceProvider extends ServiceProvider
                 ->onOneServer()
                 ->runInBackground();
         });
+    }
+
+    /**
+     * Register the proposals expiry checker on the schedule.
+     *
+     * Runs at config('ai-agents.proposals.expire_every') (default 'everyFiveMinutes')
+     * with overlap protection. Hosts can disable it via
+     * config('ai-agents.proposals.expire_schedule_enabled').
+     */
+    /**
+     * Bind the package conversation store over Laravel AI's default one.
+     *
+     * Bound in boot() so it wins over the SDK provider's own binding
+     * (registered during register()) and the config is final. When memory is
+     * disabled the SDK default store remains in place.
+     */
+    private function bindConversationStore(): void
+    {
+        // Always take over the binding so the decision is made at resolution
+        // time (after host config is final): the package store when memory is
+        // enabled, otherwise the SDK's own default store. Bound in boot() so
+        // it wins over the SDK provider's binding.
+        $this->app->singleton(
+            ConversationStore::class,
+            function (Application $app): ConversationStore {
+                if ((bool) config('ai-agents.conversations.enabled', false)) {
+                    return $app->make(PackageConversationStore::class);
+                }
+
+                return new DatabaseConversationStore(
+                    config('ai.conversations.connection'),
+                );
+            },
+        );
     }
 
     /**

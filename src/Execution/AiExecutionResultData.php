@@ -23,6 +23,9 @@ final readonly class AiExecutionResultData
      * @param  bool  $structured  Whether the reply is structured output.
      * @param  list<array<string, mixed>>  $toolCalls  Executed tool calls.
      * @param  array<string, mixed>  $metadata  Additional metadata.
+     * @param  string|null  $conversationId  The conversation this run belongs to, if any.
+     * @param  string|null  $userMessageId  The stored user message id, if any.
+     * @param  string|null  $assistantMessageId  The stored assistant message id, if any.
      */
     public function __construct(
         public string $runId,
@@ -38,6 +41,9 @@ final readonly class AiExecutionResultData
         public array $toolCalls = [],
         /** @var array<string, mixed> */
         public array $metadata = [],
+        public ?string $conversationId = null,
+        public ?string $userMessageId = null,
+        public ?string $assistantMessageId = null,
     ) {}
 
     /**
@@ -59,6 +65,9 @@ final readonly class AiExecutionResultData
             'structured' => $this->structured,
             'tool_calls' => $this->toolCalls,
             'metadata' => $this->metadata,
+            'conversation_id' => $this->conversationId,
+            'user_message_id' => $this->userMessageId,
+            'assistant_message_id' => $this->assistantMessageId,
         ];
     }
 }

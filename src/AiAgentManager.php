@@ -13,8 +13,12 @@ use HomeSide\AiAgents\Contracts\AcceptsRuntimeConfiguration;
 use HomeSide\AiAgents\Contracts\AcceptsRuntimeInstructions;
 use HomeSide\AiAgents\Contracts\DomainAgent;
 use HomeSide\AiAgents\Contracts\InspectsPrompt;
+use HomeSide\AiAgents\Conversations\ConversationManager;
+use HomeSide\AiAgents\Conversations\ConversationParticipant;
+use HomeSide\AiAgents\Conversations\PackageConversationStore;
 use HomeSide\AiAgents\Enums\AiDriver;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
+use HomeSide\AiAgents\Exceptions\ConversationNotSupportedException;
 use HomeSide\AiAgents\Exceptions\NoAiProviderException;
 use HomeSide\AiAgents\Exceptions\PrivacyViolationException;
 use HomeSide\AiAgents\Exceptions\PromptInjectionBlockedException;
@@ -27,7 +31,9 @@ use HomeSide\AiAgents\Models\AiRun;
 use HomeSide\AiAgents\Prompting\PromptCompositor;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
 use HomeSide\AiAgents\Providers\ProviderResolver;
+use Illuminate\Database\Eloquent\Model;
 use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\RemembersConversations;
 use Laravel\Ai\Responses\StructuredAgentResponse;
 use RuntimeException;
 
@@ -50,6 +56,8 @@ class AiAgentManager
         private readonly ContextBuilder $contextBuilder,
         private readonly ExecutionRecorder $recorder,
         private readonly InspectsPrompt $inspector,
+        private readonly ConversationManager $conversationManager,
+        private readonly PackageConversationStore $conversationStore,
     ) {}
 
     /**
@@ -149,6 +157,46 @@ class AiAgentManager
             executionContext: $context,
         );
 
+        // Resolve the SDK agent instance before conversation preparation:
+        // whether the agent remembers conversations decides whether a
+        // conversation id is allowed at all.
+        $sdkAgent = $this->resolveSdkAgent($agent);
+
+        // 8b. Prepare conversation memory. Only agents that declare memory
+        // through Laravel AI's RemembersConversations contract may carry it;
+        // a stateless agent handed a conversation id fails loudly instead of
+        // silently ignoring it.
+        $conversation = null;
+        $createdConversation = false;
+
+        $requestedConversationId = $context->conversationId !== null
+            ? (string) $context->conversationId
+            : null;
+
+        if ($this->conversationManager->remembers($sdkAgent)) {
+            if ($this->conversationManager->enabled()) {
+                $authorized = $this->conversationManager->resolveOrCreate(
+                    $agentKey,
+                    $context,
+                    $requestedConversationId,
+                    $userMessage,
+                );
+
+                $createdConversation = $requestedConversationId === null;
+                $conversation = $authorized;
+
+                // The run is recorded against the canonical conversation and
+                // the SDK continuation is wired below.
+                $context = $context->withConversationId($authorized->id);
+
+                // The SDK's storeConversation() carries no agent; make sure
+                // any middleware-created row is attributed to this execution.
+                $this->conversationStore->forExecution($agentKey);
+            }
+        } elseif ($requestedConversationId !== null) {
+            throw ConversationNotSupportedException::forAgent($agentKey);
+        }
+
         // 9. Execute and record the run. The provider's privacy level drives
         // content retention (full/redacted/none) on the recorded run.
         $providerPrivacy = PrivacyLevel::fromColumn($provider->privacy_level);
@@ -167,11 +215,16 @@ class AiAgentManager
         $start = microtime(true);
 
         try {
-            // Resolve the SDK agent instance.
-            $sdkAgent = $this->resolveSdkAgent($agent);
-
             if ($sdkAgent instanceof AcceptsExecutionContext) {
                 $sdkAgent->setExecutionContext($context);
+            }
+
+            // Continue the authorized conversation, if any. The middleware
+            // sees an existing currentConversation() and uses that id.
+            if ($conversation !== null && method_exists($sdkAgent, 'continue')) {
+                /** @var Agent&RemembersConversations $conversationAgent */
+                $conversationAgent = $sdkAgent;
+                $conversationAgent->continue($conversation->id, as: $this->resolveParticipant($context));
             }
 
             // Hand the resolved provider's declared model capabilities to the
@@ -262,6 +315,9 @@ class AiAgentManager
                     cachedTokens: $usageKnown ? $usage->cacheReadInputTokens : null,
                 ),
                 metadata: $responseMeta,
+                conversationId: $conversation?->id,
+                userMessageId: $response->userMessageId ?? null,
+                assistantMessageId: $response->assistantMessageId ?? null,
             );
 
             $run->refresh();
@@ -278,6 +334,12 @@ class AiAgentManager
         } catch (\Exception $e) {
             $latencyMs = (int) round((microtime(true) - $start) * 1000);
 
+            // A first turn that failed before storing any message must not
+            // leave a ghost conversation behind.
+            if ($createdConversation && $conversation !== null) {
+                $this->conversationManager->discardIfEmpty($conversation);
+            }
+
             $run->refresh();
             if ($run->status !== 'cancelled') {
                 $this->recorder->recordError($run, 'execution_failed');
@@ -289,6 +351,30 @@ class AiAgentManager
                 previous: $e,
             );
         }
+    }
+
+    /**
+     * Resolve the participant object the SDK keys a conversation by.
+     *
+     * Prefers the configured user model resolved from the owner id, so the
+     * SDK's participant_type/participant_id pair is stable across runs.
+     * Falls back to a lightweight value object when the model is missing.
+     */
+    private function resolveParticipant(AiExecutionContextData $context): object
+    {
+        /** @var class-string<Model> $userModel */
+        $userModel = (string) config('ai-agents.user_model');
+
+        if (class_exists($userModel)) {
+            /** @var Model|null $user */
+            $user = $userModel::query()->find($context->userId);
+
+            if ($user !== null) {
+                return $user;
+            }
+        }
+
+        return new ConversationParticipant($context->userId);
     }
 
     /**
