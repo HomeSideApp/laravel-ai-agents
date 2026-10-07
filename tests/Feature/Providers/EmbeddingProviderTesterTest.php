@@ -8,6 +8,7 @@ use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Enums\EmbeddingDimensionsSource;
 use HomeSide\AiAgents\Enums\EmbeddingProviderTestError;
 use HomeSide\AiAgents\Exceptions\NoProviderModelException;
+use HomeSide\AiAgents\Exceptions\StaleProviderModelProbeResultException;
 use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModel;
 use HomeSide\AiAgents\Providers\EmbeddingProviderTestData;
@@ -22,7 +23,8 @@ use Laravel\Ai\Responses\EmbeddingsResponse;
 
 /**
  * The embeddings tester: verify declared dimensions, discover them on
- * drivers that support it, and fail before any call otherwise.
+ * drivers that support it, and fail before any call otherwise. The applier
+ * re-validates the snapshot against the locked row before persisting.
  */
 final class EmbeddingProviderTesterTest extends TestCase
 {
@@ -63,6 +65,11 @@ final class EmbeddingProviderTesterTest extends TestCase
     private function tester(): EmbeddingProviderTester
     {
         return $this->app->make(EmbeddingProviderTester::class);
+    }
+
+    private function applier(): ProviderModelProbeResultApplier
+    {
+        return $this->app->make(ProviderModelProbeResultApplier::class);
     }
 
     /**
@@ -190,22 +197,17 @@ final class EmbeddingProviderTesterTest extends TestCase
 
         $this->assertTrue($result->successful());
         $this->assertSame(4, $result->dimensions);
+        $this->assertSame(EmbeddingDimensionsSource::Configured, $result->dimensionsSource);
     }
 
     // ----- Applier ---------------------------------------------------------
 
-    public function test_applier_records_discovered_dimensions_and_capability(): void
+    public function test_applier_persists_discovered_dimensions_into_an_empty_row(): void
     {
         $provider = $this->makeProvider(['type' => 'openai-compatible', 'base_url' => 'https://gateway.example.com/v1']);
-        $model = $this->makeModel($provider, 'embed', null, ['capabilities_override' => null]);
+        $model = $this->makeModel($provider, 'embed', null, ['capabilities_override' => null, 'capabilities_detected' => null]);
 
-        $result = EmbeddingProviderTestData::ok(
-            10,
-            768,
-            EmbeddingDimensionsSource::Discovered,
-        );
-
-        $this->app->make(ProviderModelProbeResultApplier::class)->apply($model, $result);
+        $this->applier()->apply($model, EmbeddingProviderTestData::discovered(10, 768));
 
         $fresh = $model->fresh();
         $this->assertSame(768, $fresh->embedding_dimensions);
@@ -213,20 +215,120 @@ final class EmbeddingProviderTesterTest extends TestCase
         $this->assertSame('ok', $fresh->last_probe_status);
     }
 
-    public function test_applier_does_not_overwrite_dimensions_on_a_mismatch(): void
+    public function test_applier_is_idempotent_for_an_equal_discovered_value(): void
     {
         $provider = $this->makeProvider();
         $model = $this->makeModel($provider, 'embed', 768);
 
-        $result = EmbeddingProviderTestData::error(
-            EmbeddingProviderTestError::DimensionMismatch,
-            'mismatch',
-        );
+        $this->applier()->apply($model, EmbeddingProviderTestData::discovered(10, 768));
 
-        $this->app->make(ProviderModelProbeResultApplier::class)->apply($model, $result);
+        $this->assertSame(768, $model->fresh()->embedding_dimensions);
+    }
+
+    public function test_applier_rejects_a_discovered_conflict_without_touching_state(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', 1024, ['capabilities_detected' => ['text']]);
+
+        try {
+            $this->applier()->apply($model, EmbeddingProviderTestData::discovered(10, 768));
+            $this->fail('A discovered conflict should have been rejected.');
+        } catch (StaleProviderModelProbeResultException) {
+            // expected
+        }
+
+        $fresh = $model->fresh();
+        $this->assertSame(1024, $fresh->embedding_dimensions);
+        $this->assertSame(['text'], $fresh->capabilities_detected);
+        $this->assertNotSame('ok', $fresh->last_probe_status);
+    }
+
+    public function test_applier_accepts_a_matching_configured_result(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', 768, ['capabilities_detected' => null]);
+
+        $this->applier()->apply($model, EmbeddingProviderTestData::configured(10, 768));
 
         $fresh = $model->fresh();
         $this->assertSame(768, $fresh->embedding_dimensions);
+        $this->assertContains('embeddings', $fresh->capabilities_detected ?? []);
+        $this->assertSame('ok', $fresh->last_probe_status);
+    }
+
+    public function test_applier_rejects_a_configured_conflict(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', 1024);
+
+        $this->expectException(StaleProviderModelProbeResultException::class);
+
+        $this->applier()->apply($model, EmbeddingProviderTestData::configured(10, 768));
+    }
+
+    public function test_applier_rejects_a_configured_result_when_dimensions_were_removed(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', null);
+
+        $this->expectException(StaleProviderModelProbeResultException::class);
+
+        $this->applier()->apply($model, EmbeddingProviderTestData::configured(10, 768));
+    }
+
+    public function test_applier_does_not_overwrite_dimensions_on_a_failed_probe(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', 768, ['capabilities_detected' => ['text']]);
+
+        $this->applier()->apply($model, EmbeddingProviderTestData::error(
+            EmbeddingProviderTestError::DimensionMismatch,
+            'mismatch',
+        ));
+
+        $fresh = $model->fresh();
+        $this->assertSame(768, $fresh->embedding_dimensions);
+        $this->assertSame(['text'], $fresh->capabilities_detected);
         $this->assertSame('error', $fresh->last_probe_status);
+    }
+
+    public function test_applier_rejects_a_stale_instance_after_the_row_changed(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'embed', null);
+
+        // T1: the probe observed an empty row.
+        $result = EmbeddingProviderTestData::discovered(10, 768);
+
+        // T2: someone else configured dimensions before apply().
+        $model->fresh()->forceFill(['embedding_dimensions' => 1024])->save();
+
+        // T3: the optimistic snapshot must be rejected because the applier
+        // re-reads the row instead of trusting the stale instance.
+        try {
+            $this->applier()->apply($model, $result);
+            $this->fail('A stale snapshot should have been rejected.');
+        } catch (StaleProviderModelProbeResultException) {
+            // expected
+        }
+
+        $this->assertSame(1024, $model->fresh()->embedding_dimensions);
+    }
+
+    public function test_applier_never_modifies_capabilities_override(): void
+    {
+        $provider = $this->makeProvider(['type' => 'openai-compatible', 'base_url' => 'https://gateway.example.com/v1']);
+        $model = $this->makeModel($provider, 'embed', null, [
+            'capabilities_override' => ['text'],
+            'capabilities_detected' => null,
+        ]);
+
+        $this->applier()->apply($model, EmbeddingProviderTestData::discovered(10, 768));
+
+        $fresh = $model->fresh();
+        $this->assertSame(['text'], $fresh->capabilities_override);
+        $this->assertContains('embeddings', $fresh->capabilities_detected ?? []);
+        // The admin override still wins over the detected capability.
+        $this->assertFalse($fresh->supportsCapability(Capability::Embeddings, 'openai-compatible'));
     }
 }
