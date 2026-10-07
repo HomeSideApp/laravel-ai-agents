@@ -6,7 +6,6 @@ namespace HomeSide\AiAgents\Providers;
 
 use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Enums\AiDriver;
-use HomeSide\AiAgents\Enums\EmbeddingDimensionsSource;
 use HomeSide\AiAgents\Enums\EmbeddingProviderTestError;
 use HomeSide\AiAgents\Exceptions\NoProviderModelException;
 use HomeSide\AiAgents\Models\AiProvider;
@@ -51,18 +50,41 @@ final class EmbeddingProviderTester
     ) {}
 
     /**
-     * Probe a stored provider's default embeddings model.
+     * Probe a provider's DEFAULT embeddings model.
+     *
+     * The default is fully configured by definition (the resolver requires
+     * the Embeddings capability and positive dimensions), so this verifies
+     * the declared dimensions. For an exploratory probe of an arbitrary
+     * (possibly unconfigured) model — including capability discovery on a
+     * driver that supports native embedding dimensions — use testModel().
      *
      * @throws \InvalidArgumentException When the endpoint violates the SSRF policy.
      * @throws NoProviderModelException When the provider has no usable embeddings model.
      */
-    public function testProvider(AiProvider $provider, ?string $modelId = null): EmbeddingProviderTestData
+    public function testProvider(AiProvider $provider): EmbeddingProviderTestData
     {
         $this->endpointPolicy->validate($provider->base_url);
 
-        $model = $modelId !== null && $modelId !== ''
-            ? $this->modelResolver->resolveExplicit($provider, $modelId, Capability::Embeddings)
-            : $this->modelResolver->resolveDefault($provider, Capability::Embeddings);
+        $model = $this->modelResolver->resolveDefault($provider, Capability::Embeddings);
+
+        return $this->testModel($provider, $model);
+    }
+
+    /**
+     * Probe a specific provider model (resolved and validated).
+     *
+     * @deprecated Pass an AiProviderModel to testModel() for an explicit
+     *             model; this variant requires a fully configured model and
+     *             cannot discover dimensions.
+     *
+     * @throws \InvalidArgumentException When the endpoint violates the SSRF policy.
+     * @throws NoProviderModelException When the provider has no usable embeddings model.
+     */
+    public function testProviderModel(AiProvider $provider, string $modelId): EmbeddingProviderTestData
+    {
+        $this->endpointPolicy->validate($provider->base_url);
+
+        $model = $this->modelResolver->resolveExplicit($provider, $modelId, Capability::Embeddings);
 
         return $this->testModel($provider, $model);
     }
@@ -124,7 +146,7 @@ final class EmbeddingProviderTester
             );
         }
 
-        return EmbeddingProviderTestData::ok($latency, $expected, EmbeddingDimensionsSource::Configured);
+        return EmbeddingProviderTestData::configured($latency, $expected);
     }
 
     /**
@@ -167,7 +189,7 @@ final class EmbeddingProviderTester
         /** @var list<float|int> $vector */
         $vector = $response->embeddings[0];
 
-        return EmbeddingProviderTestData::ok($latency, count($vector), EmbeddingDimensionsSource::Discovered);
+        return EmbeddingProviderTestData::discovered($latency, count($vector));
     }
 
     /**
