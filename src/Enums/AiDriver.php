@@ -99,6 +99,25 @@ enum AiDriver: string
     }
 
     /**
+     * Whether Laravel AI lets an embeddings model be used WITHOUT providing
+     * `dimensions` up front, so the vector length can be discovered from the
+     * response.
+     *
+     * This is NOT the same as "the driver supports embeddings": it means the
+     * SDK can run a probe without knowing N. In Laravel AI 1.x only the
+     * openai-compatible provider overrides supportsNativeEmbeddingDimensions()
+     * to true; every other provider throws when a model is passed without
+     * dimensions.
+     */
+    public function supportsNativeEmbeddingDimensions(): bool
+    {
+        return match ($this) {
+            self::OpenAICompatible => true,
+            default => false,
+        };
+    }
+
+    /**
      * Baseline model capabilities per driver, used when the provider's
      * configuration does not declare model_capabilities explicitly. Hosts
      * override per provider in the admin UI — these defaults are safe
