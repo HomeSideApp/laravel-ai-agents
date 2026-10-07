@@ -62,9 +62,14 @@ return new class extends Migration
 
     /**
      * Reverse the migrations.
+     *
+     * Deliberately a no-op: this is a data backfill and cannot distinguish
+     * the rows it created from legitimate defaults added later, so deleting
+     * by capability would destroy user configuration. The table itself is
+     * dropped when the structural migration is reverted.
      */
     public function down(): void
     {
-        DB::table('ai_provider_model_defaults')->where('capability', 'text')->delete();
+        // Intentionally irreversible.
     }
 };
