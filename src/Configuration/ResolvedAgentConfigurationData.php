@@ -36,6 +36,7 @@ final readonly class ResolvedAgentConfigurationData
         public ?string $configuredModel = null,
         /** @var array<string, mixed> */
         public array $scopeParameters = [],
+        public ?string $configuredProviderModelId = null,
     ) {}
 
     /**
@@ -60,6 +61,7 @@ final readonly class ResolvedAgentConfigurationData
             providerId: $this->providerId,
             configuredModel: $this->configuredModel,
             scopeParameters: $this->scopeParameters,
+            configuredProviderModelId: $this->configuredProviderModelId,
         );
     }
 
@@ -81,6 +83,7 @@ final readonly class ResolvedAgentConfigurationData
             'enabled' => $this->enabled,
             'provider_id' => $this->providerId,
             'configured_model' => $this->configuredModel,
+            'configured_provider_model_id' => $this->configuredProviderModelId,
         ];
     }
 }

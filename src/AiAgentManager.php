@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents;
 
 use HomeSide\AiAgents\Configuration\AgentConfigurationResolver;
+use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Configuration\ModelCapabilities;
 use HomeSide\AiAgents\Context\ContextBuilder;
 use HomeSide\AiAgents\Contracts\AcceptsExecutionContext;
@@ -30,6 +31,7 @@ use HomeSide\AiAgents\Models\AiAgent;
 use HomeSide\AiAgents\Models\AiRun;
 use HomeSide\AiAgents\Prompting\PromptCompositor;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
+use HomeSide\AiAgents\Providers\ProviderModelResolver;
 use HomeSide\AiAgents\Providers\ProviderResolver;
 use Illuminate\Database\Eloquent\Model;
 use Laravel\Ai\Contracts\Agent;
@@ -50,6 +52,7 @@ class AiAgentManager
     public function __construct(
         private readonly AgentRegistry $registry,
         private readonly ProviderResolver $providerResolver,
+        private readonly ProviderModelResolver $modelResolver,
         private readonly DynamicProviderRegistrar $registrar,
         private readonly AgentConfigurationResolver $configResolver,
         private readonly PromptCompositor $promptCompositor,
@@ -123,13 +126,20 @@ class AiAgentManager
         // 5. Register the database provider with the SDK.
         $providerName = $this->registrar->register($provider);
 
-        // 6. Use the provider's configured model.
-        $modelName = $config->configuredModel ?? $provider->model;
+        // 6. Resolve the model through the capability-aware resolver:
+        // provider_model_id → legacy model → default capability=Text →
+        // legacy provider.model. The agent's required capabilities act as
+        // secondary filters on the chosen text model.
+        /** @var list<Capability> $requiredCapabilities */
+        $requiredCapabilities = array_values($agent->requiredCapabilities());
 
-        if ($modelName !== $provider->model
-            && ! $provider->models()->where('model', $modelName)->where('enabled', true)->exists()) {
-            throw new RuntimeException("The model [{$modelName}] is not enabled for provider [{$provider->name}].");
-        }
+        $providerModel = $this->modelResolver->resolveForAgent(
+            provider: $provider,
+            providerModelId: $config->configuredProviderModelId,
+            legacyModel: $config->configuredModel,
+            requiredCapabilities: $requiredCapabilities,
+        );
+        $modelName = $providerModel->model;
 
         // 6b. Attach the resolved provider identity and its privacy fallback
         // policy to the configuration, replacing the placeholder values.

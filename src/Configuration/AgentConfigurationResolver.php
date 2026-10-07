@@ -84,6 +84,7 @@ class AgentConfigurationResolver
             providerId: $userConfig?->ai_provider_id,
             configuredModel: $userConfig?->model,
             scopeParameters: is_array($userConfig?->parameters) ? $userConfig->parameters : [],
+            configuredProviderModelId: $userConfig?->provider_model_id,
         );
     }
 
