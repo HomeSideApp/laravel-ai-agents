@@ -100,6 +100,26 @@ class ModuleAiConfiguration extends Model
      */
     protected static function validateSecurity(array $attributes, ValidatorContract $validator, ?self $model = null): void
     {
+        // provider_model_id must be coherent with ai_provider_id: a model of
+        // another provider (or a model with no provider) is a configuration
+        // error, not something discovered at runtime.
+        $providerId = $attributes['ai_provider_id'] ?? $model?->ai_provider_id;
+        $providerModelId = $attributes['provider_model_id'] ?? $model?->provider_model_id;
+
+        if (is_string($providerModelId) && $providerModelId !== '') {
+            if (! is_string($providerId) || $providerId === '') {
+                $validator->errors()->add(
+                    'provider_model_id',
+                    'A provider_model_id requires an ai_provider_id to be set.',
+                );
+            } elseif (! AiProviderModel::query()->whereKey($providerModelId)->where('ai_provider_id', $providerId)->exists()) {
+                $validator->errors()->add(
+                    'provider_model_id',
+                    "The provider model [{$providerModelId}] does not belong to the selected provider.",
+                );
+            }
+        }
+
         $module = $attributes['module'] ?? null;
         $agentName = $attributes['agent_name'] ?? null;
 
