@@ -856,11 +856,28 @@ user's provider is still rejected (only `user_id = null` shared/global
 providers and the caller's own are accessible).
 
 `EmbeddingProviderTester::testModel($provider, $model)` probes one concrete
-embeddings model (one vector, non-empty, numeric, positive dimension,
-matching `embedding_dimensions`) and reports the dimensions as a structured
-value, so a successful probe can seed `capabilities_detected += embeddings`
-and `embedding_dimensions` — never inferred from a model name.
+embeddings model and reports a structured result
+([`EmbeddingProviderTestData`](src/Providers/EmbeddingProviderTestData.php:1)):
+status, latency, dimensions, `dimensionsSource` (`configured` | `discovered`)
+and a machine-readable `error`. It validates model ownership (never mixing
+another provider's model) but does NOT require `Capability::Embeddings` or
+`enabled`, so exploratory/disabled models can be probed.
+
+Two paths, chosen by whether the model already declares its dimensions:
+
+- **known** → probe with `dimensions()` and VERIFY the returned length; a
+  mismatch is a `dimension_mismatch` error (never auto-corrected).
+- **unknown** → only on drivers whose SDK provider supports native embedding
+  dimensions (`AiDriver::supportsNativeEmbeddingDimensions()`, currently
+  `openai-compatible`) → DISCOVER the length from the response; on any other
+  driver it fails with `dimensions_required` **before** calling the provider.
+
 `testProvider()` resolves the embeddings default, not the legacy text model.
+Probing never writes: [`ProviderModelProbeResultApplier::apply()`](src/Providers/ProviderModelProbeResultApplier.php:1)
+persists `capabilities_detected += embeddings`, discovered `embedding_dimensions`
+and the probe bookkeeping — explicitly, and never on a mismatch. A successful
+probe is neither enabling the model nor making it the default: those stay
+explicit admin decisions.
 
 ### Conversation retention
 
