@@ -14,22 +14,12 @@ use Illuminate\Support\Facades\Config;
  * Centralises Config::set('ai.providers.{name}', ...) so every module uses
  * the same mechanism.
  *
- * Full driver map of SDK v0.11: openai, anthropic, gemini, ollama,
- * openai-compatible, openrouter, xai, groq, deepseek, mistral.
+ * The connectable driver set mirrors the SDK's Lab enum: openai, anthropic,
+ * gemini, ollama, openai-compatible, openrouter, xai, groq, deepseek,
+ * mistral, cohere, typesafe, azure, bedrock, eleven, jina and voyageai.
  */
 final class DynamicProviderRegistrar
 {
-    /**
-     * Extra provider types outside the AiDriver enum (SDK enterprise
-     * drivers) kept as a plain map.
-     *
-     * @var array<string, string>
-     */
-    private const EXTRA_DRIVER_MAP = [
-        'azure' => 'azure',
-        'bedrock' => 'bedrock',
-    ];
-
     /**
      * Register a system AiProvider as a dynamic SDK provider.
      *
@@ -106,12 +96,9 @@ final class DynamicProviderRegistrar
      */
     public static function supportedDrivers(): array
     {
-        return array_merge(
-            array_combine(
-                array_column(AiDriver::cases(), 'value'),
-                array_column(AiDriver::cases(), 'value'),
-            ),
-            self::EXTRA_DRIVER_MAP,
+        return array_combine(
+            array_column(AiDriver::cases(), 'value'),
+            array_column(AiDriver::cases(), 'value'),
         );
     }
 }

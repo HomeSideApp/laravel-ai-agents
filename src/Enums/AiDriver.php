@@ -7,10 +7,12 @@ namespace HomeSide\AiAgents\Enums;
 /**
  * Providers supported by the AI infrastructure.
  *
- * Each driver maps directly to a driver of the Laravel AI SDK. Unknown
- * provider types map to 'openai-compatible', so hosts using generic
- * OpenAI-protocol endpoints (NaN Builders, Together AI, ...) work without
- * declaring a dedicated driver.
+ * Each driver maps directly to a driver of the Laravel AI SDK. The enum
+ * mirrors the SDK's own Lab enum so every connectable provider is
+ * first-class here; unknown provider types still map to
+ * 'openai-compatible', so hosts using generic OpenAI-protocol endpoints
+ * (NaN Builders, Together AI, ...) work without declaring a dedicated
+ * driver.
  */
 enum AiDriver: string
 {
@@ -24,6 +26,13 @@ enum AiDriver: string
     case Groq = 'groq';
     case DeepSeek = 'deepseek';
     case Mistral = 'mistral';
+    case Cohere = 'cohere';
+    case TypeSafe = 'typesafe';
+    case Azure = 'azure';
+    case Bedrock = 'bedrock';
+    case ElevenLabs = 'eleven';
+    case Jina = 'jina';
+    case VoyageAI = 'voyageai';
 
     /**
      * Get the human-readable label for the driver.
@@ -41,6 +50,13 @@ enum AiDriver: string
             self::Groq => 'Groq',
             self::DeepSeek => 'DeepSeek',
             self::Mistral => 'Mistral',
+            self::Cohere => 'Cohere',
+            self::TypeSafe => 'TypeSafe',
+            self::Azure => 'Azure OpenAI',
+            self::Bedrock => 'AWS Bedrock',
+            self::ElevenLabs => 'ElevenLabs',
+            self::Jina => 'Jina AI',
+            self::VoyageAI => 'Voyage AI',
         };
     }
 
@@ -56,15 +72,20 @@ enum AiDriver: string
      * Get the default privacy level for a known driver.
      *
      * Hosts seed provider rows with this value so privacy gating and
-     * fallback policies work out of the box.
+     * fallback policies work out of the box. Local/self-hosted drivers map
+     * to Local; generic OpenAI-compatible endpoints stay Unknown because the
+     * package cannot know whether the host points them at a LAN box or a
+     * cloud gateway.
      */
     public function defaultPrivacyLevel(): PrivacyLevel
     {
         return match ($this) {
             self::Ollama => PrivacyLevel::Local,
-            self::OpenAI, self::Anthropic, self::Gemini, self::Groq,
-            self::XAI, self::DeepSeek, self::Mistral, self::OpenRouter => PrivacyLevel::Cloud,
             self::OpenAICompatible => PrivacyLevel::Unknown,
+            self::OpenAI, self::Anthropic, self::Gemini, self::Groq,
+            self::XAI, self::DeepSeek, self::Mistral, self::OpenRouter,
+            self::Cohere, self::TypeSafe, self::Azure, self::Bedrock,
+            self::ElevenLabs, self::Jina, self::VoyageAI => PrivacyLevel::Cloud,
         };
     }
 

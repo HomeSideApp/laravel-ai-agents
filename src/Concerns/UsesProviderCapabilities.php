@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Concerns;
 
+use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Configuration\ModelCapabilities;
 
 /**
@@ -66,5 +67,19 @@ trait UsesProviderCapabilities
         return $effort !== null && $effort !== ''
             ? ['reasoning_effort' => $effort]
             : [];
+    }
+
+    /**
+     * Whether the resolved model can run the given provider (built-in) tool.
+     *
+     * Agents with optional provider tools (web search, code execution...)
+     * call this to include a tool only when the model supports it. The SDK
+     * already skips unsupported provider tools internally, but exposing the
+     * check lets an agent adjust its prompt or fall back to a local tool
+     * instead of silently losing the capability.
+     */
+    public function supportsProviderTool(Capability $capability): bool
+    {
+        return $this->providerCapabilities?->supportsProviderTool($capability) ?? false;
     }
 }
