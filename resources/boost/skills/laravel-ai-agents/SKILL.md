@@ -1,6 +1,6 @@
 ---
 name: laravel-ai-agents
-description: Develop and integrate homeside/laravel-ai-agents features — domain agents, modules, context providers, provider resolution, privacy gates (requiredPrivacyLevel, PrivacyLevel), encrypted per-user run content (content modes, crypto-shredding, support grants), validated model writes (createValidated/updateValidated), SSRF endpoint policy, provider model capabilities and privacy fallback policy, the layered prompt firewall with classifier training commands, models.dev catalog sync, daily usage and cost consolidation, human-in-the-loop action proposals, optional tenancy, and execution recording. Use when a Laravel application contains homeside/laravel-ai-agents, code in the HomeSide\AiAgents namespace, or config/ai-agents.php, or when creating or modifying AI agents, tools, modules, or provider setup built on it.
+description: Develop and integrate homeside/laravel-ai-agents features — domain agents, modules, Agent Skills (HasSkills/LoadSkill), context providers, provider resolution, provider (built-in) tools and model capabilities, the full SDK driver set (Cohere, TypeSafe, Azure, Groq...), privacy gates (requiredPrivacyLevel, PrivacyLevel), encrypted per-user run content (content modes, crypto-shredding, support grants), validated model writes (createValidated/updateValidated), SSRF endpoint policy, provider model capabilities and privacy fallback policy, the layered prompt firewall with classifier training commands, models.dev catalog sync, daily usage and cost consolidation, human-in-the-loop action proposals and their bridge with SDK tool approvals, optional tenancy, and execution recording. Use when a Laravel application contains homeside/laravel-ai-agents, code in the HomeSide\AiAgents namespace, or config/ai-agents.php, or when creating or modifying AI agents, tools, skills, modules, or provider setup built on it.
 license: MIT
 metadata:
   author: HomeSide
@@ -62,6 +62,10 @@ Register host classes in `config/ai-agents.php`:
 ```
 
 The service provider validates these contracts during boot. Keep each agent key unique and module-qualified, such as `recipes.recipe_generator`, and make its `module()` value match the key prefix. Module identifiers are host-defined strings; do not add package enum cases for application modules.
+
+## Agent Skills compatibility
+
+The package requires `laravel/ai: ^1.1` (Agent Skills, provider-tool capabilities, the expanded driver set and native tool approvals). When combining approvals with the package's Action Proposals, the SDK is only the pause/resume transport: authorisation, auditing and expiry always run through `AuthorizesProposalDecisions` via `ProposalDecisions`, and `HomeSide\AiAgents\Proposals\SdkApprovalBridge` converts pending approvals into durable proposals and the decided proposals back into SDK decisions. Enable the integration under `proposals.sdk_approvals`; MCP-based tools additionally need `laravel/mcp: ^1.0`.
 
 ## Creating a domain agent
 
@@ -179,6 +183,34 @@ Each user owns a random 256-bit data-encryption key (DEK) in `ai_user_content_ke
 ### Support grants
 
 `HomeSide\AiAgents\Privacy\ContentSharing` grants time-boxed, ticket-referenced support access without ever persisting plaintext: `grantToSupport()` / `grantConversationToSupport()` verify ownership on every operation — a user can never grant another user's runs — `readGranted($run, $reference)` decrypts on the fly and logs the read, and `revoke()` / `revokeByReference()` clear grants. Lifetimes default to `privacy.content.default_grant_hours` (168) and are capped by `privacy.content.max_grant_hours` (720). Check current state with `AiRun::hasActiveSupportGrant()`.
+
+## Agent Skills
+
+Agent Skills are reusable instruction bundles (a directory with `SKILL.md` plus optional files) the model loads on demand. The SDK injects a `LoadSkill` tool automatically when an agent implements `Laravel\Ai\Contracts\HasSkills`. This package wraps that with a registry so skills are discovered, validated and firewall-inspected once:
+
+```php
+// config/ai-agents.php
+'skills' => [
+    'enabled' => env('AI_AGENTS_SKILLS_ENABLED', true),
+    'directories' => [resource_path('skills')],   // scanned for '<name>/SKILL.md'
+    'providers' => [App\Ai\Skills\ApplicationSkills::class], // ProvidesSkills implementations
+    'firewall' => env('AI_AGENTS_SKILLS_FIREWALL', true),
+],
+```
+
+An agent exposes skills by implementing `HasSkills` and using `UsesAgentSkills`; override `skills()` with `skillsNamed([...])` to restrict the agent to a subset:
+
+```php
+use HomeSide\AiAgents\Concerns\UsesAgentSkills;
+use Laravel\Ai\Contracts\HasSkills;
+
+final class RecipeGeneratorAgent implements HasSkills, /* ... */
+{
+    use UsesAgentSkills;
+}
+```
+
+`ProvidesSkills` implementations (registered in `skills.providers`) supply skills programmatically — e.g. from a database — and override same-named directory skills. When `skills.firewall` is true, each skill's instructions pass through the bound `InspectsPrompt`; a blocked skill is dropped with a warning instead of taking the application down. Inspect the effective set with `php artisan ai-agents:skills:sync`.
 
 ## Context providers and tools
 
@@ -330,6 +362,10 @@ Do not bypass these helpers with unrestricted mass assignment: the `scope` path 
 ### Provider capabilities and fallback policy
 
 `ModelCapabilities` (reasoning flag, reasoning effort, `ToolCallFormat` — `native` or `xml` — and advertised context window) is built from `ai_providers.configuration.model_capabilities` with `AiDriver::defaultCapabilities()` as the per-driver baseline. Agents implementing `AcceptsProviderCapabilities` receive them right before the prompt: size `max_tokens` around thinking tokens (reasoning models burn the budget before content) and pick the tool-call wire format accordingly.
+
+Provider (built-in) tools — web search, web fetch, file search, tool search, code execution — are advertised per driver in `Capability::driverBaseline()` and exposed through `ModelCapabilities::supportsProviderTool()` / the `UsesProviderCapabilities` trait. The SDK already skips provider tools a provider does not implement, so the package does not pre-filter them; use the helper to adapt the prompt or fall back to a local tool instead of silently losing a capability. Hosts may declare an explicit `model_capabilities.provider_tools` list to override the baseline.
+
+The driver set mirrors the SDK's `Lab` enum: `openai`, `anthropic`, `gemini`, `ollama`, `openai-compatible`, `openrouter`, `xai`, `groq`, `deepseek`, `mistral`, `cohere`, `typesafe`, `azure`, `bedrock`, `eleven`, `jina`, `voyageai`. Unknown provider types degrade to `openai-compatible`. `AiDriver::defaultPrivacyLevel()` seeds provider privacy (Ollama → local, OpenAI-compatible → unknown, the rest → cloud).
 
 Each provider carries a `fallback_policy` (`FallbackPolicy`: `local_only`, `same_privacy_level`, `allow_cloud`). During resolution, `ProviderResolver` replaces the primary provider with a fallback only when the candidate's privacy level satisfies that policy, so module coverage never silently degrades below the privacy the host declared.
 

@@ -12,7 +12,7 @@ configuration.
 
 - PHP `^8.2`
 - Laravel `^13.0`
-- `laravel/ai: ^1.0`
+- `laravel/ai: ^1.1`
 
 ## Installation
 
@@ -116,6 +116,35 @@ service — live in the host application and are listed in the agent's
 `tools()` method. The package ships no domain tools. When writing tools,
 authorise inside `handle()` against your domain models and policies: the
 model only provides inputs, never permissions.
+
+## Agent Skills
+
+Skills are reusable instruction bundles (a directory with `SKILL.md` plus
+optional files) the model loads on demand. The SDK injects a `LoadSkill`
+tool automatically when an agent implements `HasSkills`. This package wraps
+that with a registry so skills are discovered, validated and firewall
+inspected once:
+
+```php
+'skills' => [
+    'enabled' => env('AI_AGENTS_SKILLS_ENABLED', true),
+    'directories' => [resource_path('skills')],   // scanned for '<name>/SKILL.md'
+    'providers' => [App\Ai\Skills\ApplicationSkills::class], // ProvidesSkills
+    'firewall' => env('AI_AGENTS_SKILLS_FIREWALL', true),
+],
+```
+
+An agent exposes skills by implementing `HasSkills` and using
+`UsesAgentSkills` (restrict to a named subset with `skillsNamed([...])`).
+`ProvidesSkills` implementations registered in `skills.providers` contribute
+skills programmatically and override same-named directory skills. With
+`skills.firewall` on, each skill's instructions pass through the bound
+`InspectsPrompt`; a blocked skill is dropped with a warning. Inspect the
+effective set with:
+
+```bash
+php artisan ai-agents:skills:sync
+```
 
 ### Agent contract
 
