@@ -833,12 +833,26 @@ user → tenant → system (requested module → fallback module) chain, so a
 lower scope never wins over a higher one. A pinned `providerId` goes through
 `ProviderResolver::resolveExplicitForCapability()` — never a raw `find()` —
 so accessibility, module and the privacy anchor still apply and a foreign
-UUID cannot become an IDOR. A `local_only` provider without an embedding
-model fails with `NoEmbeddingProviderException` instead of silently
-degrading to cloud.
+UUID cannot become an IDOR.
 
-`requiredPrivacyLevel` on the request states a requirement of the operation
-itself and is enforced even on a pinned provider.
+`requiredPrivacyLevel` participates in the SELECTION, not just the final
+check: a lower-scope provider that satisfies it wins over a higher-scope one
+that does not, and a pinned provider never bypasses it. When providers exist
+for the capability but none is private enough, the resolver reports it
+(`hasCapabilityCandidateIgnoringPrivacy()`) and `EmbeddingManager` raises a
+`PrivacyViolationException` that names the real cause; otherwise it raises
+`NoEmbeddingProviderException`.
+
+A default that becomes stale (model disabled, deleted, missing the
+capability or its embedding dimensions) is treated as unusable and the
+resolver falls through to a valid provider — the default row is never
+deleted, so reactivating the model restores it. A **pinned** stale model
+still errors instead of silently falling back.
+
+In `database` isolation the tenant connection already separates tenants, but
+several personal providers coexist inside one tenant database: a foreign
+user's provider is still rejected (only `user_id = null` shared/global
+providers and the caller's own are accessible).
 
 `EmbeddingProviderTester::testModel($provider, $model)` probes one concrete
 embeddings model (one vector, non-empty, numeric, positive dimension,
@@ -854,6 +868,10 @@ Retention of **conversations** is independent from telemetry. When
 (run per tenant in database isolation) deletes conversations not updated
 within the window, cascading to their messages and never touching `AiRun`.
 A null window keeps chats until the user deletes them and needs no cron.
+
+Continuing a conversation refreshes its activity timestamp (after
+authorisation, so a foreign id can never trigger a write), which means a
+conversation being used right now can never be pruned as abandoned.
 
 ## Conversation memory
 
