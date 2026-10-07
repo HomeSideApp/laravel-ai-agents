@@ -10,6 +10,7 @@ use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
 use HomeSide\AiAgents\Console\Commands\ModelsDevSyncCommand;
+use HomeSide\AiAgents\Console\Commands\SkillsSyncCommand;
 use HomeSide\AiAgents\Console\Commands\SyncAgentsCommand;
 use HomeSide\AiAgents\Console\Commands\UsageConsolidateCommand;
 use HomeSide\AiAgents\Context\ContextBuilder;
@@ -19,6 +20,7 @@ use HomeSide\AiAgents\Contracts\DomainAgent;
 use HomeSide\AiAgents\Contracts\InspectsPrompt;
 use HomeSide\AiAgents\Contracts\ModuleAiProvider;
 use HomeSide\AiAgents\Contracts\ProposalHandler;
+use HomeSide\AiAgents\Contracts\ProvidesSkills;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Contracts\RunsForEachTenant;
 use HomeSide\AiAgents\Enums\TenantIsolation;
@@ -43,6 +45,7 @@ use HomeSide\AiAgents\Security\LexiconPromptInspector;
 use HomeSide\AiAgents\Security\NullPromptInspector;
 use HomeSide\AiAgents\Security\PromptFirewallPipeline;
 use HomeSide\AiAgents\Security\StatisticalPromptScorer;
+use HomeSide\AiAgents\Skills\SkillRegistry;
 use HomeSide\AiAgents\Synchronizer\AgentSynchronizer;
 use HomeSide\AiAgents\Tenancy\DatabaseTenantResolver;
 use HomeSide\AiAgents\Tenancy\GenericTenantResolver;
@@ -166,6 +169,23 @@ final class AiServiceProvider extends ServiceProvider
             };
         });
 
+        // Agent Skills: hydrate lazily from configured directories plus any
+        // programmatic ProvidesSkills providers, with firewall inspection.
+        $this->app->singleton(SkillRegistry::class, function (Application $app): SkillRegistry {
+            /** @var array<int, string> $directories */
+            $directories = (array) config('ai-agents.skills.directories', []);
+
+            return new SkillRegistry(
+                directories: array_values(array_filter(
+                    $directories,
+                    static fn (mixed $directory): bool => is_string($directory) && $directory !== '',
+                )),
+                enabled: (bool) config('ai-agents.skills.enabled', true),
+                firewall: (bool) config('ai-agents.skills.firewall', true),
+                inspector: $app->make(InspectsPrompt::class),
+            );
+        });
+
         $this->app->singleton(AgentRegistry::class);
         $this->app->singleton(AgentConfigurationResolver::class);
         $this->app->singleton(PromptCompositor::class);
@@ -265,6 +285,7 @@ final class AiServiceProvider extends ServiceProvider
             ModelsDevSyncCommand::class,
             UsageConsolidateCommand::class,
             SyncAgentsCommand::class,
+            SkillsSyncCommand::class,
             ExpireProposalsCommand::class,
         ]);
     }
@@ -532,6 +553,23 @@ final class AiServiceProvider extends ServiceProvider
             }
 
             $contextBuilder->register($this->app->make($providerClass));
+        }
+
+        /** @var array<class-string> $skillProviderClasses */
+        $skillProviderClasses = (array) config('ai-agents.skills.providers', []);
+
+        if ($skillProviderClasses !== [] && (bool) config('ai-agents.skills.enabled', true)) {
+            $skillRegistry = $this->app->make(SkillRegistry::class);
+
+            foreach ($skillProviderClasses as $providerClass) {
+                if (! is_a($providerClass, ProvidesSkills::class, true)) {
+                    throw new \InvalidArgumentException(
+                        "Registered AI skill provider [{$providerClass}] must implement ".ProvidesSkills::class.'.',
+                    );
+                }
+
+                $skillRegistry->registerProvider($this->app->make($providerClass));
+            }
         }
     }
 }

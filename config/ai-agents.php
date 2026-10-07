@@ -265,6 +265,43 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Agent Skills
+    |--------------------------------------------------------------------------
+    |
+    | Agent Skills are reusable instruction bundles (a directory with a
+    | SKILL.md plus optional bundled files) the model loads on demand through
+    | the SDK's LoadSkill tool. This package mirrors the agents/modules
+    | registration pattern so skills are discovered, validated and inspected
+    | once instead of relying on the SDK's implicit resource_path('skills')
+    | scan.
+    |
+    | directories: paths scanned for '<name>/SKILL.md'. Defaults to the host's
+    |              conventional resource_path('skills') so existing layouts
+    |              keep working; add package or module directories too.
+    |
+    | providers:   class-strings implementing
+    |              \HomeSide\AiAgents\Contracts\ProvidesSkills, letting hosts
+    |              declare skills programmatically (e.g. from a database).
+    |
+    | firewall:    when true, each skill's instructions are inspected with the
+    |              bound InspectsPrompt before the tool exposes them, so a
+    |              poisoned skill cannot smuggle instructions into the prompt.
+    |
+    */
+
+    'skills' => [
+        'enabled' => env('AI_AGENTS_SKILLS_ENABLED', true),
+        'directories' => [
+            resource_path('skills'),
+        ],
+        'providers' => [
+            // App\Ai\Skills\ApplicationSkills::class,
+        ],
+        'firewall' => env('AI_AGENTS_SKILLS_FIREWALL', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Action Proposals — Decision Lifecycle
     |--------------------------------------------------------------------------
     |

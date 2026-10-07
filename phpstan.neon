@@ -35,3 +35,8 @@ parameters:
         # trait; the package only ships the contract + manager injection.
         -
             message: '#Trait HomeSide\\AiAgents\\Concerns\\UsesProviderCapabilities is used zero times#'
+
+        # Same opt-in pattern: host agents consume the skills trait to satisfy
+        # the SDK's HasSkills contract; the package ships the trait + registry.
+        -
+            message: '#Trait HomeSide\\AiAgents\\Concerns\\UsesAgentSkills is used zero times#'
