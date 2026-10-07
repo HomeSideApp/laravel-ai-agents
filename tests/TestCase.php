@@ -29,6 +29,9 @@ abstract class TestCase extends TestbenchTestCase
     protected function getPackageProviders($app): array
     {
         return [
+            // The SDK provider binds the AiManager facade (agent(), Embeddings::fake(),
+            // ...), which the package builds on.
+            \Laravel\Ai\AiServiceProvider::class,
             AiServiceProvider::class,
         ];
     }
