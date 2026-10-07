@@ -55,6 +55,47 @@ enum Capability: string
     }
 
     /**
+     * Whether this capability can be the primary capability of a stored
+     * provider model default (ai_provider_model_defaults).
+     *
+     * Only operating capabilities make sense as a default: Text,
+     * Embeddings and Reranking each select a dedicated model. Features
+     * like StructuredOutput, Tools or Streaming are requirements OF a text
+     * model, not independent operations — they are expressed as secondary
+     * requirements, never as a default of their own.
+     */
+    public function canBeModelDefault(): bool
+    {
+        return match ($this) {
+            self::Text,
+            self::Embeddings,
+            self::Reranking => true,
+
+            default => false,
+        };
+    }
+
+    /**
+     * Whether the driver baseline must NOT be trusted to advertise this
+     * capability for a specific model.
+     *
+     * Embeddings and Reranking are served by dedicated models, so a driver
+     * that *can* do embeddings (Cohere, OpenAI, ...) does not mean every
+     * model of that driver can. These capabilities require explicit
+     * per-model support (capabilities_detected / capabilities_override);
+     * the driver baseline alone is not enough for model selection.
+     */
+    public function requiresExplicitModelSupport(): bool
+    {
+        return match ($this) {
+            self::Embeddings,
+            self::Reranking => true,
+
+            default => false,
+        };
+    }
+
+    /**
      * Known default capabilities for each SDK driver.
      * Used as a baseline when there is no detection or manual override.
      *

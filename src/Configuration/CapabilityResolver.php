@@ -32,8 +32,6 @@ final class CapabilityResolver
         ?array $detected = null,
         ?array $override = null,
     ): array {
-        $baseline = Capability::driverBaseline($driver);
-
         if ($override !== null && $override !== []) {
             return array_map(
                 fn (string $c) => Capability::from($c),
@@ -48,7 +46,15 @@ final class CapabilityResolver
             );
         }
 
-        return $baseline;
+        // No explicit per-model signal: trust the driver baseline for its
+        // text features, but strip capabilities that require explicit model
+        // support (Embeddings, Reranking). A driver that *can* embed does
+        // not mean every model it serves can, so those must be declared
+        // per model (detected/override) to be routable.
+        return array_values(array_filter(
+            Capability::driverBaseline($driver),
+            static fn (Capability $capability): bool => ! $capability->requiresExplicitModelSupport(),
+        ));
     }
 
     /**
