@@ -84,6 +84,11 @@ final class ConversationManager
             // being a pruning candidate for the current retention window.
             $conversation->touch();
 
+            // If pruning deleted the row between authorise() and touch(), the
+            // refresh fails BEFORE the model call, so a run never proceeds on
+            // a conversation that no longer exists.
+            $conversation->refresh();
+
             return $conversation;
         }
 
