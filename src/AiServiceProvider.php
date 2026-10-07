@@ -48,6 +48,7 @@ use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
 use HomeSide\AiAgents\Providers\EmbeddingProviderTester;
 use HomeSide\AiAgents\Providers\ImageGenerationProviderTester;
 use HomeSide\AiAgents\Providers\ProviderModelDefaults;
+use HomeSide\AiAgents\Providers\ProviderModelProbeResultApplier;
 use HomeSide\AiAgents\Providers\ProviderModelResolver;
 use HomeSide\AiAgents\Providers\ProviderResolver;
 use HomeSide\AiAgents\Security\ClassifierPromptInspector;
@@ -211,6 +212,7 @@ final class AiServiceProvider extends ServiceProvider
         $this->app->singleton(AiProviderTester::class);
         $this->app->singleton(ImageGenerationProviderTester::class);
         $this->app->singleton(EmbeddingProviderTester::class);
+        $this->app->singleton(ProviderModelProbeResultApplier::class);
         $this->app->singleton(EmbeddingManager::class);
         $this->app->singleton(AiAgentManager::class);
         $this->app->singleton(AgentSynchronizer::class);
