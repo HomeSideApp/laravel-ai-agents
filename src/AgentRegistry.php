@@ -133,6 +133,30 @@ final class AgentRegistry
     }
 
     /**
+     * Reverse lookup: the canonical key registered for a class.
+     *
+     * The SDK's conversation protocol keys off the agent CLASS
+     * (e.g. ConversationStore::latestConversationId receives a
+     * class-string<Agent>), while the package keys off the canonical
+     * agent key recorded on AiConversation. This reverse lookup keeps the
+     * two identifiers compatible without maintaining a parallel map.
+     *
+     * @param  class-string|string  $class  The agent implementation class.
+     * @return string|null The canonical key, or null when the class is not
+     *                     registered.
+     */
+    public function keyForClass(string $class): ?string
+    {
+        foreach ($this->agents as $key => $registered) {
+            if ($registered === $class || is_a($registered, $class, true) || is_a($class, $registered, true)) {
+                return $key;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Register an AI module under its module identifier.
      *
      * Modules declare agent defaults (label, system prompt, parameters) that
