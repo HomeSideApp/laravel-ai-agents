@@ -63,6 +63,16 @@ final class NoProviderModelException extends RuntimeException
     }
 
     /**
+     * An embeddings model lacks a positive embedding_dimensions value.
+     */
+    public static function missingDimensions(string $model): self
+    {
+        return new self(
+            "The embeddings model [{$model}] requires a positive embedding_dimensions value.",
+        );
+    }
+
+    /**
      * The provider model id could not be found at all.
      */
     public static function notFound(string $modelId): self

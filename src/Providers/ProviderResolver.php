@@ -153,11 +153,16 @@ final class ProviderResolver
      * scope chain would normally select.
      *
      * The normally-resolved provider acts as a PRIVACY ANCHOR: if it already
-     * serves the capability it is returned; otherwise the accessible
-     * providers are searched, but only those the anchor's fallback policy
-     * accepts. A local_only anchor with no embedding model therefore fails
-     * instead of silently degrading to a cloud embedding provider — the
-     * caller sees null and raises a capability-specific exception.
+     * serves the capability it is returned; otherwise candidates are walked
+     * in the SAME priority order as resolve() (user → tenant → system, and
+     * within a scope requested module → fallback module), keeping only those
+     * the anchor's fallback policy accepts. Iterating the ordered chain — not
+     * the unordered listAvailable() — is what keeps a lower scope from
+     * winning over a higher one.
+     *
+     * A local_only anchor with no embedding model therefore fails instead of
+     * silently degrading to a cloud embedding provider: the caller sees null
+     * and raises a capability-specific exception.
      *
      * @param  string  $module  The module that needs the capability.
      * @param  Capability  $capability  The routable capability to resolve for.
@@ -183,14 +188,11 @@ final class ProviderResolver
 
         $policy = FallbackPolicy::fromColumn($anchor->fallback_policy);
         $anchorPrivacy = PrivacyLevel::fromColumn($anchor->privacy_level);
-        $fallbackModule = (string) config('ai-agents.fallback_module', 'general');
 
-        foreach ($this->listAvailable($userId, $tenantId) as $candidate) {
-            if ($candidate->id === $anchor->id) {
-                continue;
-            }
+        foreach ($this->orderedScopes($module, $userId, $tenantId) as $scope) {
+            $candidate = $this->resolveForScopeAndModule($scope['module'], $scope['userId'], $scope['tenantId']);
 
-            if (! $candidate->servesModule($module) && ! $candidate->servesModule($fallbackModule)) {
+            if ($candidate === null || $candidate->id === $anchor->id) {
                 continue;
             }
 
@@ -198,9 +200,7 @@ final class ProviderResolver
                 continue;
             }
 
-            $candidatePrivacy = PrivacyLevel::fromColumn($candidate->privacy_level);
-
-            if (! $policy->accepts($anchorPrivacy, $candidatePrivacy)) {
+            if (! $policy->accepts($anchorPrivacy, PrivacyLevel::fromColumn($candidate->privacy_level))) {
                 continue;
             }
 
@@ -208,6 +208,159 @@ final class ProviderResolver
         }
 
         return null;
+    }
+
+    /**
+     * Validate and return an explicitly pinned provider for a capability.
+     *
+     * Knowing a provider UUID never bypasses authorisation: the provider must
+     * be accessible in the caller's scope chain, enabled, serve the module
+     * (or the fallback module), declare a default for the capability and be
+     * accepted by the privacy anchor's fallback policy. This is the
+     * provider-level equivalent of the conversation access guard, so an
+     * explicit id cannot turn into an IDOR.
+     *
+     * @param  string  $providerId  The pinned provider id.
+     * @param  string  $module  The module that needs the capability.
+     * @param  Capability  $capability  The routable capability to resolve for.
+     * @param  int|string|null  $userId  The user identifier used for personal providers.
+     * @param  int|string|null  $tenantId  The explicit tenant identifier, if any.
+     * @param  string|null  $pinnedModelId  An explicitly pinned model id, which
+     *                                      removes the need for a default.
+     * @return AiProvider|null The pinned provider when fully authorised, or null.
+     */
+    public function resolveExplicitForCapability(
+        string $providerId,
+        string $module,
+        Capability $capability,
+        int|string|null $userId = null,
+        int|string|null $tenantId = null,
+        ?string $pinnedModelId = null,
+    ): ?AiProvider {
+        $provider = AiProvider::query()->find($providerId);
+
+        if ($provider === null || ! $provider->enabled) {
+            return null;
+        }
+
+        if (! $this->isAccessible($provider, $userId, $tenantId)) {
+            return null;
+        }
+
+        $fallbackModule = (string) config('ai-agents.fallback_module', 'general');
+
+        if (! $provider->servesModule($module) && ! $provider->servesModule($fallbackModule)) {
+            return null;
+        }
+
+        // A pinned model id is validated separately by ProviderModelResolver,
+        // so a default is only required when no explicit model was supplied.
+        if (($pinnedModelId === null || $pinnedModelId === '')
+            && ! $this->hasCapabilityDefault($provider, $capability)) {
+            return null;
+        }
+
+        // Privacy anchor: even a pinned provider must satisfy the fallback
+        // policy of the provider the scope chain would normally select.
+        $anchor = $this->resolve($module, $userId, $tenantId);
+
+        if ($anchor !== null && $anchor->id !== $provider->id) {
+            $policy = FallbackPolicy::fromColumn($anchor->fallback_policy);
+
+            if (! $policy->accepts(
+                PrivacyLevel::fromColumn($anchor->privacy_level),
+                PrivacyLevel::fromColumn($provider->privacy_level),
+            )) {
+                return null;
+            }
+        }
+
+        return $provider;
+    }
+
+    /**
+     * The ordered scope + module chain used for capability resolution.
+     *
+     * Priority: user → tenant → system; within a scope, the requested module
+     * precedes the fallback module. This mirrors resolve()'s walk so
+     * capability fallback never inverts scope precedence.
+     *
+     * @return list<array{userId: int|string|null, tenantId: int|string|null, module: string}>
+     */
+    private function orderedScopes(
+        string $module,
+        int|string|null $userId,
+        int|string|null $tenantId,
+    ): array {
+        $accessibleTenantId = $this->tenantResolver->resolveAccessible($userId, $tenantId);
+        $fallbackModule = (string) config('ai-agents.fallback_module', 'general');
+
+        $scopes = [];
+
+        if ($userId !== null) {
+            $scopes[] = ['userId' => $userId, 'tenantId' => null];
+        }
+
+        if ($accessibleTenantId !== null) {
+            $scopes[] = ['userId' => null, 'tenantId' => $accessibleTenantId];
+        }
+
+        $scopes[] = ['userId' => null, 'tenantId' => null];
+
+        $chain = [];
+
+        foreach ($scopes as $scope) {
+            $modules = $module === $fallbackModule ? [$module] : [$module, $fallbackModule];
+
+            foreach ($modules as $candidateModule) {
+                $chain[] = [
+                    'userId' => $scope['userId'],
+                    'tenantId' => $scope['tenantId'],
+                    'module' => $candidateModule,
+                ];
+            }
+        }
+
+        return $chain;
+    }
+
+    /**
+     * Whether the provider is reachable from the caller's scope chain.
+     *
+     * Global providers are always reachable; a personal provider only by its
+     * owner (and only without a tenant); a tenant provider only when the
+     * caller's tenant is authorised. In database isolation mode each tenant
+     * already has its own connection, so the scope is not re-checked.
+     *
+     * @param  int|string|null  $userId  The caller's user id.
+     * @param  int|string|null  $tenantId  The explicit tenant id, if any.
+     */
+    private function isAccessible(AiProvider $provider, int|string|null $userId, int|string|null $tenantId): bool
+    {
+        if ($this->tenantResolver->isolation() === TenantIsolation::Database) {
+            return $this->tenantResolver->enabled() || $provider->isGlobal();
+        }
+
+        $foreignKey = $this->tenantForeignKey();
+
+        if ($provider->isGlobal()) {
+            return true;
+        }
+
+        if ($userId !== null
+            && $provider->user_id !== null
+            && (string) $provider->user_id === (string) $userId
+            && ($foreignKey === null || $provider->{$foreignKey} === null)) {
+            return true;
+        }
+
+        $accessibleTenantId = $this->tenantResolver->resolveAccessible($userId, $tenantId);
+
+        return $accessibleTenantId !== null
+            && is_string($foreignKey)
+            && $provider->user_id === null
+            && $provider->{$foreignKey} !== null
+            && (string) $provider->{$foreignKey} === (string) $accessibleTenantId;
     }
 
     /**

@@ -167,6 +167,13 @@ final class ProviderModelResolver
             throw NoProviderModelException::missingCapabilities($model->model, $capability, $missing);
         }
 
+        // Embeddings must declare their vector length: the SDK throws when a
+        // model is passed without dimensions (except openai-compatible), and
+        // a vector store needs N. Catch it here, before any API call.
+        if ($capability === Capability::Embeddings && ($model->embedding_dimensions ?? 0) <= 0) {
+            throw NoProviderModelException::missingDimensions($model->model);
+        }
+
         return $model;
     }
 

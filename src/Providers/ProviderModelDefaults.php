@@ -42,10 +42,21 @@ final class ProviderModelDefaults
             throw NoProviderModelException::notOwned($model->id, $provider->name);
         }
 
+        if (! $model->enabled) {
+            throw NoProviderModelException::disabled($model->model);
+        }
+
         $driver = AiDriver::fromColumn($provider->type)->value;
 
         if (! $model->supportsCapability($capability, $driver)) {
             throw NoProviderModelException::missingCapabilities($model->model, $capability, [$capability->value]);
+        }
+
+        // Embeddings need an explicit vector length: the SDK requires
+        // dimensions when a model is passed (except openai-compatible), and a
+        // vector store needs to know N. Persist a valid default or none.
+        if ($capability === Capability::Embeddings && ($model->embedding_dimensions ?? 0) <= 0) {
+            throw NoProviderModelException::missingDimensions($model->model);
         }
 
         return DB::transaction(function () use ($provider, $capability, $model): AiProviderModelDefault {
