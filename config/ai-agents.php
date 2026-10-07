@@ -339,6 +339,17 @@ return [
         'execute' => env('AI_AGENTS_PROPOSALS_EXECUTE', 'queue'),          // queue|sync|none
         'expire_schedule_enabled' => env('AI_AGENTS_PROPOSALS_EXPIRE_SCHEDULE', true),
         'expire_every' => env('AI_AGENTS_PROPOSALS_EXPIRE_EVERY', 'everyFiveMinutes'),
+
+        // Bridge with the SDK's native tool approvals. When enabled, hosts
+        // can convert a paused run's pending approvals into durable Action
+        // Proposals (and the decisions back), so the package's authorizer,
+        // auditing and expiry govern approvals triggered by built-in tools.
+        // Authorisation always runs through authorizer above; the SDK only
+        // transports the pause/resume.
+        'sdk_approvals' => [
+            'enabled' => env('AI_AGENTS_PROPOSALS_SDK_APPROVALS', false),
+            'type' => env('AI_AGENTS_PROPOSALS_SDK_APPROVALS_TYPE', 'sdk_approval'),
+        ],
     ],
 
     /*

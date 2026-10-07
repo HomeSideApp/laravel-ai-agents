@@ -36,6 +36,7 @@ use HomeSide\AiAgents\Prompting\PromptCompositor;
 use HomeSide\AiAgents\Proposals\OwnerOnlyProposalAuthorizer;
 use HomeSide\AiAgents\Proposals\ProposalDecisions;
 use HomeSide\AiAgents\Proposals\ProposalHandlerRegistry;
+use HomeSide\AiAgents\Proposals\SdkApprovalBridge;
 use HomeSide\AiAgents\Providers\AiProviderTester;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
 use HomeSide\AiAgents\Providers\ImageGenerationProviderTester;
@@ -275,6 +276,15 @@ final class AiServiceProvider extends ServiceProvider
             return new ProposalDecisions(
                 $app->make(AuthorizesProposalDecisions::class),
                 $app->make(ProposalHandlerRegistry::class),
+            );
+        });
+
+        // Bridge between the SDK's native tool approvals and the package's
+        // Action Proposals, so a host can use either as the transport while
+        // keeping one authorisation/audit path.
+        $this->app->singleton(SdkApprovalBridge::class, function (Application $app): SdkApprovalBridge {
+            return new SdkApprovalBridge(
+                proposalType: (string) config('ai-agents.proposals.sdk_approvals.type', 'sdk_approval'),
             );
         });
 
