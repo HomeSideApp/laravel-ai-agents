@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Providers;
 
+use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Enums\AiDriver;
 use HomeSide\AiAgents\Models\AiProvider;
+use HomeSide\AiAgents\Models\AiProviderModelDefault;
 use Illuminate\Support\Facades\Config;
 
 /**
@@ -23,6 +25,13 @@ final class DynamicProviderRegistrar
     /**
      * Register a system AiProvider as a dynamic SDK provider.
      *
+     * The SDK-facing `models` block is built exclusively from the stored
+     * data (per-capability defaults + the model rows), never invented. The
+     * text default falls back to the legacy AiProvider.model during the
+     * transition; embeddings/reranking entries appear only when a default
+     * exists, since the SDK understands `models.{capability}.default` and,
+     * for embeddings, `models.embeddings.dimensions`.
+     *
      * @return string The registered provider name (e.g. 'dynamic-ai-abc123').
      */
     public function register(AiProvider $provider): string
@@ -34,14 +43,58 @@ final class DynamicProviderRegistrar
             'driver' => $driver,
             'url' => $provider->base_url,
             'key' => $provider->api_key,
-            'models' => [
-                'text' => [
-                    'default' => $provider->model,
-                ],
-            ],
+            'models' => $this->modelsFor($provider),
         ]);
 
         return $dynamicName;
+    }
+
+    /**
+     * Build the SDK `models` configuration block for a provider.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function modelsFor(AiProvider $provider): array
+    {
+        $defaults = $provider->modelDefaults()->with('model')->get();
+
+        /** @var array<int, Capability> $capabilities */
+        $capabilities = [
+            Capability::Text,
+            Capability::Embeddings,
+            Capability::Reranking,
+        ];
+
+        $models = [];
+
+        foreach ($capabilities as $capability) {
+            /** @var AiProviderModelDefault|null $default */
+            $default = $defaults->first(
+                fn (AiProviderModelDefault $row): bool => $row->capability === $capability,
+            );
+
+            $model = $default?->model;
+
+            if ($model === null) {
+                // Transition only: the text default may still live on the
+                // legacy AiProvider.model column.
+                if ($capability === Capability::Text && $provider->model !== '') {
+                    $models['text'] = ['default' => $provider->model];
+                }
+
+                continue;
+            }
+
+            $entry = ['default' => $model->model];
+
+            if ($capability === Capability::Embeddings && $model->embedding_dimensions !== null) {
+                $entry['dimensions'] = $model->embedding_dimensions;
+            }
+
+            $models[$capability->value] = $entry;
+        }
+
+        return $models;
     }
 
     /**

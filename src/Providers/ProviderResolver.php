@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Providers;
 
+use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Contracts\ResolvesTenant;
 use HomeSide\AiAgents\Enums\FallbackPolicy;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
@@ -144,6 +145,79 @@ final class ProviderResolver
             provider: $provider,
             dynamicName: $dynamicName,
         );
+    }
+
+    /**
+     * Resolve the best provider that has a default model for a capability,
+     * without ever violating the privacy fallback policy of the provider the
+     * scope chain would normally select.
+     *
+     * The normally-resolved provider acts as a PRIVACY ANCHOR: if it already
+     * serves the capability it is returned; otherwise the accessible
+     * providers are searched, but only those the anchor's fallback policy
+     * accepts. A local_only anchor with no embedding model therefore fails
+     * instead of silently degrading to a cloud embedding provider — the
+     * caller sees null and raises a capability-specific exception.
+     *
+     * @param  string  $module  The module that needs the capability.
+     * @param  Capability  $capability  The routable capability to resolve for.
+     * @param  int|string|null  $userId  The user identifier used for personal providers.
+     * @param  int|string|null  $tenantId  The explicit tenant identifier, if any.
+     * @return AiProvider|null The provider with the capability (anchor first), or null.
+     */
+    public function resolveForCapability(
+        string $module,
+        Capability $capability,
+        int|string|null $userId = null,
+        int|string|null $tenantId = null,
+    ): ?AiProvider {
+        $anchor = $this->resolve($module, $userId, $tenantId);
+
+        if ($anchor === null) {
+            return null;
+        }
+
+        if ($this->hasCapabilityDefault($anchor, $capability)) {
+            return $anchor;
+        }
+
+        $policy = FallbackPolicy::fromColumn($anchor->fallback_policy);
+        $anchorPrivacy = PrivacyLevel::fromColumn($anchor->privacy_level);
+        $fallbackModule = (string) config('ai-agents.fallback_module', 'general');
+
+        foreach ($this->listAvailable($userId, $tenantId) as $candidate) {
+            if ($candidate->id === $anchor->id) {
+                continue;
+            }
+
+            if (! $candidate->servesModule($module) && ! $candidate->servesModule($fallbackModule)) {
+                continue;
+            }
+
+            if (! $this->hasCapabilityDefault($candidate, $capability)) {
+                continue;
+            }
+
+            $candidatePrivacy = PrivacyLevel::fromColumn($candidate->privacy_level);
+
+            if (! $policy->accepts($anchorPrivacy, $candidatePrivacy)) {
+                continue;
+            }
+
+            return $candidate;
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether the provider declares a default model for the capability.
+     */
+    private function hasCapabilityDefault(AiProvider $provider, Capability $capability): bool
+    {
+        return $provider->modelDefaults()
+            ->where('capability', $capability->value)
+            ->exists();
     }
 
     /**
