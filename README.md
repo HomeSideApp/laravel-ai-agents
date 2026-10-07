@@ -872,12 +872,22 @@ Two paths, chosen by whether the model already declares its dimensions:
   `openai-compatible`) → DISCOVER the length from the response; on any other
   driver it fails with `dimensions_required` **before** calling the provider.
 
-`testProvider()` resolves the embeddings default, not the legacy text model.
-Probing never writes: [`ProviderModelProbeResultApplier::apply()`](src/Providers/ProviderModelProbeResultApplier.php:1)
+`testProvider()` probes the provider's fully configured **default** (a
+verification-only path); `testModel()` is the exploratory entry point
+(capability/discovery). Probing never writes: [`ProviderModelProbeResultApplier::apply()`](src/Providers/ProviderModelProbeResultApplier.php:1)
 persists `capabilities_detected += embeddings`, discovered `embedding_dimensions`
-and the probe bookkeeping — explicitly, and never on a mismatch. A successful
-probe is neither enabling the model nor making it the default: those stay
-explicit admin decisions.
+and the probe bookkeeping.
+
+A probe result is an optimistic **snapshot**: `apply()` re-reads the row under
+a database lock and rejects it as stale when the dimensions changed in the
+meantime (`StaleProviderModelProbeResultException`) instead of overwriting
+newer configuration. A `configured` result only applies if the current
+dimensions are still exactly the probed value; a `discovered` result applies
+when the current value is `null` or equal, and is rejected when it differs. A
+conflict never adds the capability or marks the probe `ok`. `capabilities_override`
+is never modified — an automatic probe never wins over an explicit admin
+decision. A successful probe is neither enabling the model nor making it the
+default: those stay explicit admin decisions.
 
 ### Conversation retention
 
