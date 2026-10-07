@@ -158,6 +158,7 @@ final class EmbeddingManager
                 userId: $request->userId,
                 tenantId: $request->tenantId,
                 pinnedModelId: $request->providerModelId,
+                requiredPrivacyLevel: $request->requiredPrivacyLevel,
             );
         } else {
             $provider = $this->providerResolver->resolveForCapability(
@@ -165,10 +166,26 @@ final class EmbeddingManager
                 Capability::Embeddings,
                 $request->userId,
                 $request->tenantId,
+                $request->requiredPrivacyLevel,
             );
         }
 
         if ($provider === null) {
+            // Distinguish "no provider for the capability" from "providers
+            // exist but none satisfies the required privacy level".
+            if ($request->requiredPrivacyLevel !== null
+                && $this->providerResolver->hasCapabilityCandidateIgnoringPrivacy(
+                    $request->module,
+                    Capability::Embeddings,
+                    $request->userId,
+                    $request->tenantId,
+                )) {
+                throw new PrivacyViolationException(
+                    "No embeddings provider for module [{$request->module}] meets the required "
+                    ."privacy level [{$request->requiredPrivacyLevel->value}].",
+                );
+            }
+
             throw NoEmbeddingProviderException::forModule($request->module);
         }
 

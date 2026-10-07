@@ -36,6 +36,7 @@ final class ProviderResolver
 {
     public function __construct(
         private readonly ResolvesTenant $tenantResolver,
+        private readonly ProviderModelResolver $modelResolver,
     ) {}
 
     /**
@@ -175,6 +176,7 @@ final class ProviderResolver
         Capability $capability,
         int|string|null $userId = null,
         int|string|null $tenantId = null,
+        ?PrivacyLevel $requiredPrivacyLevel = null,
     ): ?AiProvider {
         $anchor = $this->resolve($module, $userId, $tenantId);
 
@@ -182,7 +184,8 @@ final class ProviderResolver
             return null;
         }
 
-        if ($this->hasCapabilityDefault($anchor, $capability)) {
+        if ($this->hasUsableCapabilityDefault($anchor, $capability)
+            && $this->satisfiesRequiredPrivacy($anchor, $requiredPrivacyLevel)) {
             return $anchor;
         }
 
@@ -196,7 +199,11 @@ final class ProviderResolver
                 continue;
             }
 
-            if (! $this->hasCapabilityDefault($candidate, $capability)) {
+            if (! $this->hasUsableCapabilityDefault($candidate, $capability)) {
+                continue;
+            }
+
+            if (! $this->satisfiesRequiredPrivacy($candidate, $requiredPrivacyLevel)) {
                 continue;
             }
 
@@ -208,6 +215,49 @@ final class ProviderResolver
         }
 
         return null;
+    }
+
+    /**
+     * Whether every candidate in the scope chain is rejected purely because
+     * of the required privacy level.
+     *
+     * Used by callers to distinguish "no provider for the capability" from
+     * "providers exist but none is private enough", so the latter can raise
+     * a PrivacyViolationException that names the real cause.
+     */
+    public function hasCapabilityCandidateIgnoringPrivacy(
+        string $module,
+        Capability $capability,
+        int|string|null $userId = null,
+        int|string|null $tenantId = null,
+    ): bool {
+        $anchor = $this->resolve($module, $userId, $tenantId);
+
+        if ($anchor !== null && $this->hasUsableCapabilityDefault($anchor, $capability)) {
+            return true;
+        }
+
+        foreach ($this->orderedScopes($module, $userId, $tenantId) as $scope) {
+            $candidate = $this->resolveForScopeAndModule($scope['module'], $scope['userId'], $scope['tenantId']);
+
+            if ($candidate !== null && $this->hasUsableCapabilityDefault($candidate, $capability)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the provider satisfies an absolute privacy requirement.
+     */
+    private function satisfiesRequiredPrivacy(AiProvider $provider, ?PrivacyLevel $required): bool
+    {
+        if ($required === null) {
+            return true;
+        }
+
+        return PrivacyLevel::fromColumn($provider->privacy_level)->isAtLeast($required);
     }
 
     /**
@@ -236,6 +286,7 @@ final class ProviderResolver
         int|string|null $userId = null,
         int|string|null $tenantId = null,
         ?string $pinnedModelId = null,
+        ?PrivacyLevel $requiredPrivacyLevel = null,
     ): ?AiProvider {
         $provider = AiProvider::query()->find($providerId);
 
@@ -247,6 +298,11 @@ final class ProviderResolver
             return null;
         }
 
+        // A pinned provider never bypasses an absolute privacy requirement.
+        if (! $this->satisfiesRequiredPrivacy($provider, $requiredPrivacyLevel)) {
+            return null;
+        }
+
         $fallbackModule = (string) config('ai-agents.fallback_module', 'general');
 
         if (! $provider->servesModule($module) && ! $provider->servesModule($fallbackModule)) {
@@ -254,9 +310,10 @@ final class ProviderResolver
         }
 
         // A pinned model id is validated separately by ProviderModelResolver,
-        // so a default is only required when no explicit model was supplied.
+        // so a usable default is only required when no explicit model was
+        // supplied.
         if (($pinnedModelId === null || $pinnedModelId === '')
-            && ! $this->hasCapabilityDefault($provider, $capability)) {
+            && ! $this->hasUsableCapabilityDefault($provider, $capability)) {
             return null;
         }
 
@@ -325,20 +382,43 @@ final class ProviderResolver
     }
 
     /**
+     * Whether the provider declares a USABLE default model for the capability.
+     *
+     * A default row that no longer resolves (model disabled, deleted, missing
+     * the capability, missing embedding dimensions) must not keep the
+     * provider in the routing chain: it is skipped so a valid provider can
+     * take over. The row is never deleted — reactivating the model makes it
+     * usable again.
+     */
+    private function hasUsableCapabilityDefault(AiProvider $provider, Capability $capability): bool
+    {
+        return $this->modelResolver->canResolveDefault($provider, $capability);
+    }
+
+    /**
      * Whether the provider is reachable from the caller's scope chain.
      *
      * Global providers are always reachable; a personal provider only by its
      * owner (and only without a tenant); a tenant provider only when the
-     * caller's tenant is authorised. In database isolation mode each tenant
-     * already has its own connection, so the scope is not re-checked.
+     * caller's tenant is authorised. In database isolation mode the tenant
+     * column is irrelevant but the user column still applies.
      *
      * @param  int|string|null  $userId  The caller's user id.
      * @param  int|string|null  $tenantId  The explicit tenant id, if any.
      */
     private function isAccessible(AiProvider $provider, int|string|null $userId, int|string|null $tenantId): bool
     {
+        // Database isolation makes the tenant column irrelevant (each tenant
+        // has its own database) but NOT the user column: within one tenant's
+        // database several personal providers coexist, so a foreign user's
+        // provider must still be rejected. A null user_id is the tenant-shared
+        // (or global) provider and stays accessible.
         if ($this->tenantResolver->isolation() === TenantIsolation::Database) {
-            return $this->tenantResolver->enabled() || $provider->isGlobal();
+            if ($provider->user_id === null) {
+                return true;
+            }
+
+            return $userId !== null && (string) $provider->user_id === (string) $userId;
         }
 
         $foreignKey = $this->tenantForeignKey();
@@ -361,16 +441,6 @@ final class ProviderResolver
             && $provider->user_id === null
             && $provider->{$foreignKey} !== null
             && (string) $provider->{$foreignKey} === (string) $accessibleTenantId;
-    }
-
-    /**
-     * Whether the provider declares a default model for the capability.
-     */
-    private function hasCapabilityDefault(AiProvider $provider, Capability $capability): bool
-    {
-        return $provider->modelDefaults()
-            ->where('capability', $capability->value)
-            ->exists();
     }
 
     /**

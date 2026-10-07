@@ -51,6 +51,25 @@ final class ProviderModelResolver
     }
 
     /**
+     * Whether the provider's default for the capability is usable.
+     *
+     * Reuses resolveDefault() so there is a single set of rules (default
+     * present, model exists, enabled, supports the capability, and declares
+     * embedding dimensions when required). A stale default returns false
+     * instead of blocking the routing chain, so a valid fallback can win.
+     */
+    public function canResolveDefault(AiProvider $provider, Capability $capability): bool
+    {
+        try {
+            $this->resolveDefault($provider, $capability);
+
+            return true;
+        } catch (NoProviderModelException) {
+            return false;
+        }
+    }
+
+    /**
      * Resolve a specific model, verifying ownership and capabilities.
      *
      * Knowing a model UUID never bypasses the resolver: it must belong to
