@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Console\Commands;
 
 use HomeSide\AiAgents\Contracts\RunsForEachTenant;
-use HomeSide\AiAgents\Models\AiConversation;
+use HomeSide\AiAgents\Conversations\ConversationPruner;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 
@@ -35,7 +35,7 @@ class PruneConversationsCommand extends Command
      *
      * @return int Exit code — SUCCESS when pruning completes.
      */
-    public function handle(RunsForEachTenant $runner): int
+    public function handle(RunsForEachTenant $runner, ConversationPruner $pruner): int
     {
         /** @var string|null $days */
         $days = $this->option('days');
@@ -55,18 +55,10 @@ class PruneConversationsCommand extends Command
 
         $pruned = 0;
 
-        $runner->each(function () use ($threshold, &$pruned): void {
-            // Delete model instances (not a mass query delete) so the
-            // conversation's deleting hook cascades its messages even on
-            // connections where database-level foreign keys are not enforced.
-            AiConversation::query()
-                ->where('updated_at', '<', $threshold)
-                ->chunkById(100, function ($conversations) use (&$pruned): void {
-                    foreach ($conversations as $conversation) {
-                        $conversation->delete();
-                        $pruned++;
-                    }
-                });
+        // The pruner re-reads each candidate under a row lock before deleting,
+        // so a conversation continued after the candidate scan is not removed.
+        $runner->each(function () use ($pruner, $threshold, &$pruned): void {
+            $pruned += $pruner->pruneExpired($threshold);
         });
 
         if ($pruned === 0) {
