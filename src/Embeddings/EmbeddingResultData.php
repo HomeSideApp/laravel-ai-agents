@@ -14,7 +14,7 @@ final readonly class EmbeddingResultData
 {
     /**
      * @param  list<list<float>>  $embeddings  One vector per input, in order.
-     * @param  array{inputTokens?: int, totalTokens?: int}|null  $usage
+     * @param  array{inputTokens: int, outputTokens: int, totalTokens: int}|null  $usage
      */
     public function __construct(
         public array $embeddings,
