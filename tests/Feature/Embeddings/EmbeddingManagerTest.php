@@ -396,14 +396,21 @@ final class EmbeddingManagerTest extends TestCase
         $this->assertCount(2, $result->embeddings);
     }
 
-    public function test_batch_size_splits_inputs_and_preserves_order(): void
+    public function test_batch_size_splits_inputs_into_the_expected_calls(): void
     {
-        Embeddings::fake();
+        /** @var list<list<string>> $batches */
+        $batches = [];
 
-        $provider = $this->makeProvider();
-        $model = $this->makeEmbeddingModel($provider, 'embed', 3);
-        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $model);
-        $this->registerDynamic($provider);
+        Embeddings::fake(function ($prompt) use (&$batches) {
+            $batches[] = array_values($prompt->inputs);
+
+            return array_map(
+                fn (): array => array_fill(0, $prompt->dimensions, 0.1),
+                array_values($prompt->inputs),
+            );
+        });
+
+        $this->makeProviderWithEmbeddings('embed', 3);
 
         $result = $this->manager()->embed(new EmbeddingRequestData(
             userId: 1,
@@ -415,7 +422,16 @@ final class EmbeddingManagerTest extends TestCase
 
         $this->assertCount(5, $result->embeddings);
         $this->assertSame(3, $result->dimensions);
-        // Three batches ran (2 + 2 + 1): the usage is aggregated.
+
+        // 5 inputs at batch size 2 → three calls: 2, 2, 1.
+        $this->assertCount(3, $batches);
+        $this->assertCount(2, $batches[0]);
+        $this->assertCount(2, $batches[1]);
+        $this->assertCount(1, $batches[2]);
+        $this->assertSame(['a', 'b'], $batches[0]);
+        $this->assertSame(['c', 'd'], $batches[1]);
+        $this->assertSame(['e'], $batches[2]);
+
         $this->assertArrayHasKey('totalTokens', $result->usage);
     }
 
