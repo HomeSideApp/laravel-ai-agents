@@ -49,12 +49,23 @@ final class EmbeddingProviderTester
     }
 
     /**
-     * Probe one concrete embeddings model.
+     * Probe one concrete model, exploratory or configured.
+     *
+     * Ownership is validated so the probe can never mix a provider's
+     * credentials/endpoint with another provider's model name (which would
+     * produce a misleading "incompatible" result). The Embeddings capability
+     * is deliberately NOT required here: detecting it is the whole point of
+     * the probe, so a not-yet-classified (or disabled) model is allowed.
      *
      * @throws \InvalidArgumentException When the endpoint violates the SSRF policy.
+     * @throws NoProviderModelException When the model belongs to another provider.
      */
     public function testModel(AiProvider $provider, AiProviderModel $model): EmbeddingProviderTestData
     {
+        if ((string) $model->ai_provider_id !== (string) $provider->id) {
+            throw NoProviderModelException::notOwned($model->id, $provider->name);
+        }
+
         $this->endpointPolicy->validate($provider->base_url);
 
         $dynamicName = $this->registrar->register($provider);
