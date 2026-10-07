@@ -107,13 +107,34 @@ final class ProviderModelResolverTest extends TestCase
     public function test_same_model_can_be_default_for_text_and_embeddings_when_it_supports_both(): void
     {
         $provider = $this->makeProvider();
-        $model = $this->makeModel($provider, 'multi', ['text', 'embeddings']);
+        $model = $this->makeModel($provider, 'multi', ['text', 'embeddings'], ['embedding_dimensions' => 1536]);
 
         $defaults = $this->app->make(ProviderModelDefaults::class);
         $defaults->set($provider, Capability::Text, $model);
         $defaults->set($provider, Capability::Embeddings, $model);
 
         $this->assertSame(2, AiProviderModelDefault::query()->where('ai_provider_id', $provider->id)->count());
+    }
+
+    public function test_setting_an_embeddings_default_without_dimensions_is_rejected(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'no-dims', ['embeddings'], ['embedding_dimensions' => null]);
+
+        $this->expectException(NoProviderModelException::class);
+        $this->expectExceptionMessage('embedding_dimensions');
+
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $model);
+    }
+
+    public function test_setting_a_disabled_model_as_default_is_rejected(): void
+    {
+        $provider = $this->makeProvider();
+        $model = $this->makeModel($provider, 'off', ['text'], ['enabled' => false]);
+
+        $this->expectException(NoProviderModelException::class);
+
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Text, $model);
     }
 
     public function test_setting_a_default_for_a_non_routable_capability_is_rejected(): void

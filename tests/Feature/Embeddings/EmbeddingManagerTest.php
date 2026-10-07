@@ -7,9 +7,11 @@ namespace HomeSide\AiAgents\Tests\Feature\Embeddings;
 use HomeSide\AiAgents\Configuration\Capability;
 use HomeSide\AiAgents\Embeddings\EmbeddingManager;
 use HomeSide\AiAgents\Embeddings\EmbeddingRequestData;
+use HomeSide\AiAgents\Enums\PrivacyLevel;
 use HomeSide\AiAgents\Exceptions\EmbeddingDimensionMismatchException;
 use HomeSide\AiAgents\Exceptions\NoEmbeddingProviderException;
 use HomeSide\AiAgents\Exceptions\NoProviderModelException;
+use HomeSide\AiAgents\Exceptions\PrivacyViolationException;
 use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModel;
 use HomeSide\AiAgents\Providers\DynamicProviderRegistrar;
@@ -236,6 +238,91 @@ final class EmbeddingManagerTest extends TestCase
             module: 'assistant',
             inputs: ['x'],
         ));
+    }
+
+    public function test_pinned_provider_of_another_user_is_rejected(): void
+    {
+        Embeddings::fake();
+
+        // Owner 1 provider with embeddings; caller is user 2.
+        $owner = $this->makeProvider(['scope' => ['user' => 1]]);
+        $model = $this->makeEmbeddingModel($owner, 'owner-embed', 3);
+        $this->app->make(ProviderModelDefaults::class)->set($owner, Capability::Embeddings, $model);
+
+        $this->expectException(NoEmbeddingProviderException::class);
+
+        $this->manager()->embed(new EmbeddingRequestData(
+            userId: 2,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['x'],
+            providerId: $owner->id,
+            providerModelId: $model->id,
+        ));
+    }
+
+    public function test_pinned_disabled_provider_is_rejected(): void
+    {
+        Embeddings::fake();
+
+        $provider = $this->makeProvider();
+        $model = $this->makeEmbeddingModel($provider, 'embed', 3);
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $model);
+        $provider->update(['enabled' => false]);
+
+        $this->expectException(NoEmbeddingProviderException::class);
+
+        $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['x'],
+            providerId: $provider->id,
+            providerModelId: $model->id,
+        ));
+    }
+
+    public function test_required_privacy_level_blocks_a_cloud_provider(): void
+    {
+        Embeddings::fake();
+
+        $provider = $this->makeProvider(['privacy_level' => 'cloud']);
+        $model = $this->makeEmbeddingModel($provider, 'embed', 3);
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $model);
+        $this->registerDynamic($provider);
+
+        $this->expectException(PrivacyViolationException::class);
+
+        $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['x'],
+            requiredPrivacyLevel: PrivacyLevel::Local,
+        ));
+    }
+
+    public function test_batch_size_splits_inputs_and_preserves_order(): void
+    {
+        Embeddings::fake();
+
+        $provider = $this->makeProvider();
+        $model = $this->makeEmbeddingModel($provider, 'embed', 3);
+        $this->app->make(ProviderModelDefaults::class)->set($provider, Capability::Embeddings, $model);
+        $this->registerDynamic($provider);
+
+        $result = $this->manager()->embed(new EmbeddingRequestData(
+            userId: 1,
+            tenantId: null,
+            module: 'assistant',
+            inputs: ['a', 'b', 'c', 'd', 'e'],
+            batchSize: 2,
+        ));
+
+        $this->assertCount(5, $result->embeddings);
+        $this->assertSame(3, $result->dimensions);
+        // Three batches ran (2 + 2 + 1): the usage is aggregated.
+        $this->assertArrayHasKey('totalTokens', $result->usage);
     }
 
     /**
