@@ -171,10 +171,10 @@ final class EmbeddingManager
         }
 
         if ($provider === null) {
-            // Distinguish "no provider for the capability" from "providers
-            // exist but none satisfies the required privacy level".
+            // Distinguish "no acceptable provider for the capability" from
+            // "one exists and only the required privacy level rejects it".
             if ($request->requiredPrivacyLevel !== null
-                && $this->providerResolver->hasCapabilityCandidateIgnoringPrivacy(
+                && $this->providerResolver->hasCandidateRejectedOnlyByRequiredPrivacy(
                     $request->module,
                     Capability::Embeddings,
                     $request->userId,

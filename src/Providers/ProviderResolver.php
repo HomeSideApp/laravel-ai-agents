@@ -218,14 +218,18 @@ final class ProviderResolver
     }
 
     /**
-     * Whether every candidate in the scope chain is rejected purely because
-     * of the required privacy level.
+     * Whether a candidate exists that satisfies everything EXCEPT the
+     * required privacy level.
      *
-     * Used by callers to distinguish "no provider for the capability" from
-     * "providers exist but none is private enough", so the latter can raise
-     * a PrivacyViolationException that names the real cause.
+     * Applies the same checks as resolveForCapability() (accessible, enabled,
+     * serves the module, usable capability default, accepted by the anchor's
+     * fallback policy) and deliberately omits only requiredPrivacyLevel. This
+     * gives PrivacyViolationException a reliable meaning: true means the ONLY
+     * reason nothing was selected is the privacy requirement; false means
+     * there is genuinely no acceptable candidate (e.g. the fallback policy
+     * blocked the only one).
      */
-    public function hasCapabilityCandidateIgnoringPrivacy(
+    public function hasCandidateRejectedOnlyByRequiredPrivacy(
         string $module,
         Capability $capability,
         int|string|null $userId = null,
@@ -233,16 +237,32 @@ final class ProviderResolver
     ): bool {
         $anchor = $this->resolve($module, $userId, $tenantId);
 
-        if ($anchor !== null && $this->hasUsableCapabilityDefault($anchor, $capability)) {
+        if ($anchor === null) {
+            return false;
+        }
+
+        $policy = FallbackPolicy::fromColumn($anchor->fallback_policy);
+
+        if ($this->hasUsableCapabilityDefault($anchor, $capability)) {
             return true;
         }
 
         foreach ($this->orderedScopes($module, $userId, $tenantId) as $scope) {
             $candidate = $this->resolveForScopeAndModule($scope['module'], $scope['userId'], $scope['tenantId']);
 
-            if ($candidate !== null && $this->hasUsableCapabilityDefault($candidate, $capability)) {
-                return true;
+            if ($candidate === null || $candidate->id === $anchor->id) {
+                continue;
             }
+
+            if (! $this->hasUsableCapabilityDefault($candidate, $capability)) {
+                continue;
+            }
+
+            if (! $policy->accepts(PrivacyLevel::fromColumn($anchor->privacy_level), PrivacyLevel::fromColumn($candidate->privacy_level))) {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
