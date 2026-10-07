@@ -596,6 +596,8 @@ return [
 
         'retention' => [
             'days' => env('AI_AGENTS_CONVERSATIONS_RETENTION_DAYS'),
+            'schedule_enabled' => env('AI_AGENTS_CONVERSATIONS_RETENTION_SCHEDULE', true),
+            'schedule_at' => env('AI_AGENTS_CONVERSATIONS_RETENTION_AT', '04:00'),
         ],
 
         'titles' => [

@@ -10,6 +10,7 @@ use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
 use HomeSide\AiAgents\Console\Commands\ModelsDevSyncCommand;
+use HomeSide\AiAgents\Console\Commands\PruneConversationsCommand;
 use HomeSide\AiAgents\Console\Commands\SkillsSyncCommand;
 use HomeSide\AiAgents\Console\Commands\SyncAgentsCommand;
 use HomeSide\AiAgents\Console\Commands\UsageConsolidateCommand;
@@ -316,6 +317,7 @@ final class AiServiceProvider extends ServiceProvider
             FirewallStatusCommand::class,
             ModelsDevSyncCommand::class,
             UsageConsolidateCommand::class,
+            PruneConversationsCommand::class,
             SyncAgentsCommand::class,
             SkillsSyncCommand::class,
             ExpireProposalsCommand::class,
@@ -390,6 +392,45 @@ final class AiServiceProvider extends ServiceProvider
         $this->scheduleModelsDevSync();
         $this->scheduleUsageConsolidation();
         $this->scheduleProposalsExpiry();
+        $this->scheduleConversationPruning();
+    }
+
+    /**
+     * Register the daily usage consolidation on the schedule.
+     *
+     * Runs after the models.dev sync (default 03:00) so prices are fresh
+     * before the next day's runs, with overlap protection. Disable or move
+     * it via config('ai-agents.usage').
+     */
+    /**
+     * Register the conversation retention pruning on the schedule.
+     *
+     * Only active when conversations.retention.days is configured; a null
+     * window means "keep until deleted" and needs no cron. Runs after the
+     * usage consolidation with overlap protection. Conversation lifecycle is
+     * independent from AiRun telemetry.
+     */
+    private function scheduleConversationPruning(): void
+    {
+        $days = config('ai-agents.conversations.retention.days');
+
+        if ($days === null || $days === '') {
+            return;
+        }
+
+        if (! (bool) config('ai-agents.conversations.retention.schedule_enabled', true)) {
+            return;
+        }
+
+        $this->app->booted(function (Application $app): void {
+            $schedule = $app->make(Schedule::class);
+
+            $schedule->command('ai-agents:conversations:prune')
+                ->dailyAt((string) config('ai-agents.conversations.retention.schedule_at', '04:00'))
+                ->withoutOverlapping(120)
+                ->onOneServer()
+                ->runInBackground();
+        });
     }
 
     /**
