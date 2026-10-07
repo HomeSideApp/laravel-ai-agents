@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Models\Casts;
 
+use HomeSide\AiAgents\Privacy\UserContentCipher;
 use HomeSide\AiAgents\Privacy\UserContentKeyManager;
 use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
 use Illuminate\Database\Eloquent\Model;
@@ -22,17 +23,17 @@ use RuntimeException;
  * - plain / redacted / none (or legacy rows without content_mode): the
  *   value round-trips unchanged.
  *
- * The cast never throws on read: unreadable ciphertext (e.g. after a
- * crypto-shred) degrades to the raw stored value, so history pages keep
- * rendering their non-content fields.
+ * The cryptographic work lives in {@see UserContentCipher}; this cast only
+ * decides when it applies (content_mode + owner present). The cast never
+ * throws on read: unreadable ciphertext (e.g. after a crypto-shred)
+ * degrades to the raw stored value, so history pages keep rendering their
+ * non-content fields.
  */
 /**
  * @implements CastsAttributes<string|null, string|null>
  */
 class RunContentCast implements CastsAttributes
 {
-    private const CIPHER_PREFIX = 'enc:v1:';
-
     /**
      * Whether the cast is active for this model instance: content_mode
      * must be present and 'encrypted', and the row must have an owner.
@@ -61,7 +62,9 @@ class RunContentCast implements CastsAttributes
             return null;
         }
 
-        if (! $this->isActive($model, $attributes) || ! str_starts_with($value, self::CIPHER_PREFIX)) {
+        $cipher = app(UserContentCipher::class);
+
+        if (! $this->isActive($model, $attributes) || ! $cipher->isCiphertext((string) $value)) {
             return $value;
         }
 
@@ -69,7 +72,7 @@ class RunContentCast implements CastsAttributes
             $manager = app(UserContentKeyManager::class);
             $dek = $manager->keyFor((string) $model->getAttribute('user_id'));
 
-            return $this->decrypt((string) $value, $dek);
+            return $cipher->decrypt((string) $value, $dek);
         } catch (RuntimeException) {
             // Shredded key or broken ciphertext: degrade to the raw value.
             return $value;
@@ -94,65 +97,6 @@ class RunContentCast implements CastsAttributes
         $manager = app(UserContentKeyManager::class);
         $dek = $manager->keyFor((string) $model->getAttribute('user_id'));
 
-        return $this->encrypt((string) $value, $dek);
-    }
-
-    /**
-     * Encrypt plaintext with the user's DEK (AES-256-GCM via sodium) and
-     * prefix the version marker.
-     */
-    private function encrypt(string $plaintext, string $dek): string
-    {
-        $key = $this->deriveKey($dek);
-        $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
-
-        $cipher = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt(
-            $plaintext,
-            self::CIPHER_PREFIX, // additional data binds the marker into the tag
-            $nonce,
-            $key,
-        );
-
-        return self::CIPHER_PREFIX.base64_encode($nonce.$cipher);
-    }
-
-    /**
-     * Decrypt prefixed ciphertext back to plaintext.
-     *
-     * @throws RuntimeException When decryption fails (wrong key, corrupt tag).
-     */
-    private function decrypt(string $stored, string $dek): string
-    {
-        $payload = substr($stored, strlen(self::CIPHER_PREFIX));
-        $raw = base64_decode($payload, true);
-
-        if ($raw === false || strlen($raw) <= SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES) {
-            throw new RuntimeException('Corrupt ciphertext payload.');
-        }
-
-        $nonceSize = SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES;
-        $nonce = substr($raw, 0, $nonceSize);
-        $cipher = substr($raw, $nonceSize);
-
-        $plaintext = sodium_crypto_aead_xchacha20poly1305_ietf_decrypt(
-            $cipher,
-            self::CIPHER_PREFIX,
-            $nonce,
-            $this->deriveKey($dek),
-        );
-
-        if ($plaintext === false) {
-            throw new RuntimeException('Decryption failed.');
-        }
-
-        return $plaintext;
-    }
-
-    /**
-     * Stretch the base64 DEK into a 32-byte sodium key.
-     */
-    private function deriveKey(string $dek): string
-    {
-        return hash('sha256', $dek, true);
+        return app(UserContentCipher::class)->encrypt((string) $value, $dek);
     }
 }
