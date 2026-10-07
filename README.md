@@ -80,6 +80,7 @@ directory.
 | `context_providers` | Array of `ContextProvider` class-strings to register. |
 | `proposals` | Human-in-the-loop action proposal lifecycle — see [Action proposals](#action-proposals-human-in-the-loop). |
 | `conversations` | Persistent chat memory for conversational agents — see [Conversation memory](#conversation-memory). |
+| `embeddings` | Generic embeddings infra (cache, timeout, batch size) — see [Per-capability model defaults & embeddings](#per-capability-model-defaults--embeddings). |
 | `injection_patterns` | Regex list used by `PromptCompositor` guardrails; extend or replace per host. |
 
 ## Registering Agents and Modules
@@ -708,6 +709,128 @@ No input firewall is complete. For defence in depth:
 - **Structural defences** — the prompt hierarchy (platform policy is
   authoritative) and server-side authorisation inside every tool remain the
   barriers that cannot be bypassed by input tricks.
+
+## Per-capability model defaults & embeddings
+
+A provider used to expose a single default model (`AiProvider.model` /
+`AiProviderModel.is_default`). That does not scale to several operations
+served by different models on the SAME endpoint, credentials, privacy and
+scope. The new source of truth is `ai_provider_model_defaults`: one default
+model per (provider, capability).
+
+```text
+ai_provider_model_defaults
+    ai_provider_id  FK
+    ai_provider_model_id FK
+    capability      text | embeddings | reranking
+    UNIQUE(ai_provider_id, capability)
+```
+
+Ownership is derived transitively (`default → model → provider →
+user/tenant/system`), so the table carries no tenant column and every
+resolution starts from an already authorised provider.
+
+### Only routable capabilities can be defaults
+
+`Capability::canBeModelDefault()` limits defaults to `text`, `embeddings`
+and `reranking`. `StructuredOutput`, `Tools` and `Streaming` are features
+required OF a text model, not operations — they are expressed as secondary
+requirements, never as a default:
+
+```php
+// Select the Text default ONLY if it also supports the rest:
+$model = $resolver->resolveDefault($provider, Capability::Text, [
+    Capability::StructuredOutput,
+    Capability::Tools,
+]);
+```
+
+### Embeddings/reranking require explicit model support
+
+`Capability::requiresExplicitModelSupport()` marks `embeddings` and
+`reranking`: a driver that *can* embed (Cohere, OpenAI...) does not mean
+every model it serves can. Those capabilities are never inherited from the
+driver baseline — they must appear in `capabilities_detected` or
+`capabilities_override`. This prevents "driver = Cohere → default embeddings
+→ runtime fails".
+
+### ProviderModelResolver
+
+`ProviderResolver` owns scope/module/privacy/fallback; the new
+`ProviderModelResolver` owns model/capability/enabled/compatibility:
+
+```php
+$resolver->resolveDefault($provider, Capability::Embeddings);
+$resolver->resolveExplicit($provider, $modelId, Capability::Embeddings);
+```
+
+Text agents use `resolveForAgent()` with this precedence:
+
+```text
+ModuleAiConfiguration.provider_model_id
+      ↓
+legacy ModuleAiConfiguration.model
+      ↓
+default capability=Text
+      ↓
+legacy AiProvider.model   (transition only)
+      ↓
+NoProviderModelException
+```
+
+A pinned model is never silently replaced by another, and knowing a model
+UUID never bypasses ownership/capability validation.
+
+### Setting defaults
+
+`AiProviderModel::markAsDefault()` is deprecated. Promote through the
+validating service (transactional, checks routable capability, ownership
+and model support):
+
+```php
+$providerModelDefaults->set($provider, Capability::Text, $textModel);
+$providerModelDefaults->set($provider, Capability::Embeddings, $embeddingModel);
+```
+
+`DynamicProviderRegistrar` builds the SDK `models` block from stored data
+only (`models.text.default`, `models.embeddings.default + dimensions`,
+`models.reranking.default`), falling back to `AiProvider.model` for text
+during the transition.
+
+### Embeddings
+
+```php
+$result = $embeddingManager->embed(new EmbeddingRequestData(
+    userId: $userId,
+    tenantId: $tenantId,
+    module: 'assistant',
+    inputs: ['Ana prefiere leche sin lactosa.'],
+    // providerModelId: $pinned,  // optional pin, still re-validated
+));
+
+$result->embeddings;      // list<vector>
+$result->dimensions;
+$result->providerId; $result->model;
+```
+
+`EmbeddingManager` is generic infrastructure: it knows nothing about
+semantic memory, uses Laravel AI's own `Embeddings` API and cache
+(`config('ai-agents.embeddings')`, disabled by default), validates that the
+vector count matches the inputs and each vector matches
+`embedding_dimensions` (guarding a future `VECTOR(N)` column), and never
+creates `AiRun` rows. The package never assumes a vector store: MariaDB
+VECTOR, pgvector, Qdrant... are the host's choice.
+
+Privacy is preserved: for embeddings, `ProviderResolver::resolveForCapability()`
+treats the normally-resolved provider as a privacy anchor and only searches
+among the fallback policy's accepted candidates. A `local_only` provider
+without an embedding model fails with `NoEmbeddingProviderException`
+instead of silently degrading to cloud.
+
+`EmbeddingProviderTester` probes an embeddings model (one vector,
+non-empty, numeric, positive dimension) so a successful probe can seed
+`capabilities_detected += embeddings` and `embedding_dimensions` — never
+inferred from a model name.
 
 ## Conversation memory
 
