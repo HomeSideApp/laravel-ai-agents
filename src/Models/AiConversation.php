@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Models;
 
 use HomeSide\AiAgents\AgentRegistry;
+use HomeSide\AiAgents\Models\Casts\ConversationTitleCast;
 use HomeSide\AiAgents\Models\Concerns\ValidatesOnWrite;
 use HomeSide\AiAgents\Tenancy\BelongsToTenant;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
@@ -30,16 +31,48 @@ use Illuminate\Support\Carbon;
  * Relationships:
  * @property Model|null $user The user who owns the conversation (resolved via config).
  * @property Collection<int, AiRun> $runs The AI runs produced by the conversation.
+ * @property Collection<int, AiConversationMessage> $messages The durable transcript.
  */
 class AiConversation extends Model
 {
     use BelongsToTenant, HasUuids, ValidatesOnWrite;
 
     protected $fillable = [
+        'id',
         'user_id',
         'agent',
         'title',
     ];
+
+    /**
+     * Cascade message deletion at the application level.
+     *
+     * The migration also declares a database-level ON DELETE CASCADE, but a
+     * model hook guarantees the transcript is removed even on connections
+     * where foreign keys are not enforced.
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (AiConversation $conversation): void {
+            $conversation->messages()->delete();
+        });
+    }
+
+    /**
+     * Get the attribute casts for the model.
+     *
+     * The title is protected content: it can reveal private information, so
+     * it is stored encrypted like the message payload. The cast tolerates
+     * legacy plaintext rows.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'title' => ConversationTitleCast::class,
+        ];
+    }
 
     /**
      * Validation rules for validated writes.
@@ -86,6 +119,12 @@ class AiConversation extends Model
     public function runs(): HasMany
     {
         return $this->hasMany(AiRun::class, 'conversation_id');
+    }
+
+    /** @return HasMany<AiConversationMessage, $this> */
+    public function messages(): HasMany
+    {
+        return $this->hasMany(AiConversationMessage::class, 'conversation_id');
     }
 
     /**
