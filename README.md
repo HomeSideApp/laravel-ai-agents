@@ -821,16 +821,39 @@ vector count matches the inputs and each vector matches
 creates `AiRun` rows. The package never assumes a vector store: MariaDB
 VECTOR, pgvector, Qdrant... are the host's choice.
 
-Privacy is preserved: for embeddings, `ProviderResolver::resolveForCapability()`
-treats the normally-resolved provider as a privacy anchor and only searches
-among the fallback policy's accepted candidates. A `local_only` provider
-without an embedding model fails with `NoEmbeddingProviderException`
-instead of silently degrading to cloud.
+`batch_size` splits large input lists into several provider calls while
+preserving order and aggregating usage. `embedding_dimensions` is mandatory
+for any embeddings default/pinned model: the SDK throws when a model is
+passed without dimensions (except `openai-compatible`), and a vector store
+needs N.
 
-`EmbeddingProviderTester` probes an embeddings model (one vector,
-non-empty, numeric, positive dimension) so a successful probe can seed
-`capabilities_detected += embeddings` and `embedding_dimensions` — never
-inferred from a model name.
+Privacy is preserved on every path: `ProviderResolver::resolveForCapability()`
+treats the normally-resolved provider as a privacy anchor and walks the SAME
+user → tenant → system (requested module → fallback module) chain, so a
+lower scope never wins over a higher one. A pinned `providerId` goes through
+`ProviderResolver::resolveExplicitForCapability()` — never a raw `find()` —
+so accessibility, module and the privacy anchor still apply and a foreign
+UUID cannot become an IDOR. A `local_only` provider without an embedding
+model fails with `NoEmbeddingProviderException` instead of silently
+degrading to cloud.
+
+`requiredPrivacyLevel` on the request states a requirement of the operation
+itself and is enforced even on a pinned provider.
+
+`EmbeddingProviderTester::testModel($provider, $model)` probes one concrete
+embeddings model (one vector, non-empty, numeric, positive dimension,
+matching `embedding_dimensions`) and reports the dimensions as a structured
+value, so a successful probe can seed `capabilities_detected += embeddings`
+and `embedding_dimensions` — never inferred from a model name.
+`testProvider()` resolves the embeddings default, not the legacy text model.
+
+### Conversation retention
+
+Retention of **conversations** is independent from telemetry. When
+`conversations.retention.days` is set, `php artisan ai-agents:conversations:prune`
+(run per tenant in database isolation) deletes conversations not updated
+within the window, cascading to their messages and never touching `AiRun`.
+A null window keeps chats until the user deletes them and needs no cron.
 
 ## Conversation memory
 
