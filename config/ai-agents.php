@@ -520,6 +520,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Embeddings
+    |--------------------------------------------------------------------------
+    |
+    | Generic embeddings infrastructure (EmbeddingManager). Model selection
+    | always resolves a provider + model for the Embeddings capability
+    | through the same resolver as agents, so privacy and tenancy apply.
+    |
+    | cache: maps to Laravel AI's own embedding cache (never a second cache).
+    |        Disabled by default, a conservative privacy-first choice.
+    |
+    | timeout: per-request timeout in seconds.
+    | batch_size: maximum inputs per request advertised to callers.
+    |
+    | The package never stores vectors: MariaDB VECTOR, pgvector, Qdrant...
+    | are the host's choice.
+    |
+    */
+
+    'embeddings' => [
+        'cache' => [
+            'enabled' => env('AI_AGENTS_EMBEDDINGS_CACHE', false),
+            'seconds' => 2592000,
+            'individually' => true,
+        ],
+
+        'timeout' => env('AI_AGENTS_EMBEDDINGS_TIMEOUT', 30),
+        'batch_size' => (int) env('AI_AGENTS_EMBEDDINGS_BATCH_SIZE', 50),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Conversation Memory
     |--------------------------------------------------------------------------
     |
