@@ -872,6 +872,49 @@ Two paths, chosen by whether the model already declares its dimensions:
   `openai-compatible`) → DISCOVER the length from the response; on any other
   driver it fails with `dimensions_required` **before** calling the provider.
 
+### Embedding profiles & fingerprint
+
+An embedding is only meaningful within the exact vector space it was
+produced in. `same dimensions ≠ same embedding space`, and even
+`same model name` is not enough: the endpoint, driver, model id, dimensions,
+an explicit profile version and the per-purpose options all define the space.
+
+A **profile** is resolved by
+[`EmbeddingProfileResolver`](src/Embeddings/EmbeddingProfileResolver.php:1)
+WITHOUT calling the provider (pure DB/config resolution, reusing
+`ProviderResolver`/`ProviderModelResolver`, so every scope/privacy/tenancy/
+pinning invariant holds). It returns
+[`ResolvedEmbeddingProfileData`](src/Embeddings/ResolvedEmbeddingProfileData.php:1):
+provider, model, driver, dimensions, `profileVersion`, `purpose`,
+`providerOptions` and a deterministic **fingerprint**.
+
+- **Purpose** ([`EmbeddingPurpose`](src/Enums/EmbeddingPurpose.php:1)):
+  `generic` (default, backwards compatible), `document` (indexed content) and
+  `query` (search text). The purpose only selects which options apply.
+- **Options** live on `AiProviderModel.embedding_options` as
+  `{generic, document, query}`; `document`/`query` are merged over `generic`
+  (`array_replace_recursive`). A caller can never pass arbitrary provider
+  options — only the trusted, stored configuration is used. Credentials stay
+  on `AiProvider`.
+- **Fingerprint** ([`EmbeddingProfileFingerprint`](src/Embeddings/EmbeddingProfileFingerprint.php:1)):
+  SHA-256 over a canonicalised payload (recursive key sorting; list order
+  preserved). It represents the WHOLE profile — generic + document + query —
+  so **Document and Query of the same profile share one fingerprint**, while a
+  change to any bucket (even query-only) changes it. It changes with provider
+  id/driver/endpoint, model id/name, dimensions, `embedding_profile_version`
+  or any option, and does NOT change with API-key rotation, display names or
+  probe metadata.
+- **Version**: bump `embedding_profile_version`
+  ([`EmbeddingProfileVersioner`](src/Embeddings/EmbeddingProfileVersioner.php:1))
+  to invalidate the space even when the visible configuration is unchanged
+  (re-deployed weights behind the same alias). Never derived from `updated_at`.
+
+`EmbeddingManager` uses the resolved profile exclusively and always returns it
+on [`EmbeddingResultData`](src/Embeddings/EmbeddingResultData.php:1)
+(`$result->profile->fingerprint`), so a host can persist the vector together
+with its space identity. The package never re-indexes: the host compares a
+stored fingerprint against the current profile to detect stale vectors.
+
 `testProvider()` probes the provider's fully configured **default** (a
 verification-only path); `testModel()` is the exploratory entry point
 (capability/discovery). Probing never writes: [`ProviderModelProbeResultApplier::apply()`](src/Providers/ProviderModelProbeResultApplier.php:1)
