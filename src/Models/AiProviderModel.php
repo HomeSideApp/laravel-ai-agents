@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Models;
 
 use HomeSide\AiAgents\Configuration\Capability;
+use HomeSide\AiAgents\Enums\EmbeddingPurpose;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -24,6 +25,8 @@ use Illuminate\Support\Carbon;
  * @property int|null $context_window The context window size of the model, if known.
  * @property int|null $max_output_tokens The maximum number of output tokens of the model, if known.
  * @property int|null $embedding_dimensions The embedding vector length, when the model produces embeddings.
+ * @property int $embedding_profile_version The explicit embedding space version (escape hatch).
+ * @property array<string, mixed>|null $embedding_options Per-purpose embedding options (generic/document/query).
  * @property array<string, mixed>|null $metadata Additional metadata of the model.
  * @property Carbon|null $last_probed_at The timestamp when the model was last probed.
  * @property string|null $last_probe_status The status of the last probe of the model.
@@ -48,6 +51,8 @@ class AiProviderModel extends Model
         'context_window',
         'max_output_tokens',
         'embedding_dimensions',
+        'embedding_profile_version',
+        'embedding_options',
         'metadata',
         'last_probed_at',
         'last_probe_status',
@@ -68,6 +73,8 @@ class AiProviderModel extends Model
             'context_window' => 'integer',
             'max_output_tokens' => 'integer',
             'embedding_dimensions' => 'integer',
+            'embedding_profile_version' => 'integer',
+            'embedding_options' => 'array',
             'metadata' => 'array',
             'last_probed_at' => 'datetime',
         ];
@@ -77,6 +84,55 @@ class AiProviderModel extends Model
     public function provider(): BelongsTo
     {
         return $this->belongsTo(AiProvider::class, 'ai_provider_id');
+    }
+
+    /**
+     * The per-purpose embedding options declared for this model.
+     *
+     * Only the keys generic/document/query are meaningful; anything else is
+     * ignored. Credentials never belong here (they live on AiProvider).
+     *
+     * @return array{generic: array<string, mixed>, document: array<string, mixed>, query: array<string, mixed>}
+     */
+    public function embeddingOptions(): array
+    {
+        $stored = $this->embedding_options ?? [];
+
+        return [
+            'generic' => $this->optionBucket($stored, EmbeddingPurpose::Generic),
+            'document' => $this->optionBucket($stored, EmbeddingPurpose::Document),
+            'query' => $this->optionBucket($stored, EmbeddingPurpose::Query),
+        ];
+    }
+
+    /**
+     * The effective provider options for one purpose: the generic options
+     * overlaid with the purpose-specific ones (deterministic nested merge).
+     *
+     * @return array<string, mixed>
+     */
+    public function embeddingOptionsFor(EmbeddingPurpose $purpose): array
+    {
+        $options = $this->embeddingOptions();
+
+        return array_replace_recursive(
+            $options['generic'],
+            $options[$purpose->value],
+        );
+    }
+
+    /**
+     * Extract a single, well-formed options bucket from the stored array.
+     *
+     * @param  array<string, mixed>  $stored
+     * @return array<string, mixed>
+     */
+    private function optionBucket(array $stored, EmbeddingPurpose $purpose): array
+    {
+        $bucket = $stored[$purpose->value] ?? null;
+
+        /** @var array<string, mixed> */
+        return is_array($bucket) ? $bucket : [];
     }
 
     /**

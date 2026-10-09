@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Embeddings;
 
+use HomeSide\AiAgents\Enums\EmbeddingPurpose;
 use HomeSide\AiAgents\Enums\PrivacyLevel;
 use InvalidArgumentException;
 
@@ -32,6 +33,10 @@ final readonly class EmbeddingRequestData
      *                                                   provider's fallback
      *                                                   policy.
      * @param  int|null  $batchSize  Max inputs per provider call, or null for config.
+     * @param  EmbeddingPurpose  $purpose  The embedding purpose, which selects
+     *                                     the effective provider options. It
+     *                                     never grants arbitrary provider
+     *                                     options to the caller.
      */
     public function __construct(
         public int|string $userId,
@@ -43,6 +48,7 @@ final readonly class EmbeddingRequestData
         public ?int $timeout = null,
         public ?PrivacyLevel $requiredPrivacyLevel = null,
         public ?int $batchSize = null,
+        public EmbeddingPurpose $purpose = EmbeddingPurpose::Generic,
     ) {
         if ($batchSize !== null && $batchSize < 1) {
             throw new InvalidArgumentException('batchSize must be greater than zero.');
