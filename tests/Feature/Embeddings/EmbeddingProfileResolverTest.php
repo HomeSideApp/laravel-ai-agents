@@ -18,6 +18,7 @@ use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModel;
 use HomeSide\AiAgents\Providers\ProviderModelDefaults;
 use HomeSide\AiAgents\Tests\TestCase;
+use Illuminate\Support\Facades\DB;
 use Laravel\Ai\Embeddings;
 use Laravel\Ai\Prompts\EmbeddingsPrompt;
 
@@ -307,6 +308,69 @@ final class EmbeddingProfileResolverTest extends TestCase
         $after = $this->resolver()->resolve(1, null, 'assistant', EmbeddingPurpose::Document)->fingerprint;
 
         $this->assertNotSame($before, $after);
+    }
+
+    public function test_a_zero_profile_version_is_rejected(): void
+    {
+        [$provider, $model] = $this->providerWithOptions();
+        $model->fresh()->forceFill(['embedding_profile_version' => 0])->save();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('must be >= 1');
+
+        $this->resolver()->resolve(1, null, 'assistant');
+    }
+
+    public function test_invalid_stored_options_fail_closed_on_resolution(): void
+    {
+        [$provider, $model] = $this->providerWithOptions();
+        // Simulate legacy/corrupt data written outside the model guard (raw
+        // SQL/import), which the saving hook cannot intercept.
+        DB::table('ai_provider_models')
+            ->where('id', $model->id)
+            ->update(['embedding_options' => json_encode(['documment' => ['x' => 1]])]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('documment');
+
+        $this->resolver()->resolve(1, null, 'assistant');
+    }
+
+    public function test_stored_options_with_secrets_fail_closed_on_resolution(): void
+    {
+        [$provider, $model] = $this->providerWithOptions();
+        DB::table('ai_provider_models')
+            ->where('id', $model->id)
+            ->update(['embedding_options' => json_encode(['query' => ['api_key' => 'secret']])]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('not allowed');
+
+        $this->resolver()->resolve(1, null, 'assistant');
+    }
+
+    public function test_saving_options_with_a_secret_is_rejected(): void
+    {
+        $provider = $this->makeProvider();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('not allowed');
+
+        $this->makeEmbeddingModel($provider, [
+            'embedding_options' => ['query' => ['authorization' => 'Bearer secret']],
+        ]);
+    }
+
+    public function test_saving_options_with_an_unknown_purpose_is_rejected(): void
+    {
+        $provider = $this->makeProvider();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Unknown embedding purpose');
+
+        $this->makeEmbeddingModel($provider, [
+            'embedding_options' => ['documment' => ['x' => 1]],
+        ]);
     }
 
     public function test_bumping_the_profile_version_changes_the_fingerprint(): void

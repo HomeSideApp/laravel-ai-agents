@@ -135,6 +135,50 @@ final class EmbeddingProfileFingerprintTest extends TestCase
         $this->assertSame($a, $b);
     }
 
+    public function test_endpoint_host_case_is_normalised(): void
+    {
+        $providerA = $this->makeProvider(['base_url' => 'https://API.EXAMPLE.COM/v1']);
+        $providerB = $this->makeProvider(['base_url' => 'https://api.example.com/v1']);
+        $providerB->forceFill(['id' => $providerA->id]);
+
+        $model = $this->makeModel($providerA);
+
+        $a = $this->fingerprint()->compute($providerA, $model, $this->buckets());
+        $b = $this->fingerprint()->compute($providerB, $model, $this->buckets());
+
+        $this->assertSame($a, $b);
+    }
+
+    public function test_endpoint_default_port_is_normalised(): void
+    {
+        $providerA = $this->makeProvider(['base_url' => 'https://example.com/v1']);
+        $providerB = $this->makeProvider(['base_url' => 'https://example.com:443/v1']);
+        $providerB->forceFill(['id' => $providerA->id]);
+
+        $model = $this->makeModel($providerA);
+
+        $a = $this->fingerprint()->compute($providerA, $model, $this->buckets());
+        $b = $this->fingerprint()->compute($providerB, $model, $this->buckets());
+
+        $this->assertSame($a, $b);
+    }
+
+    public function test_endpoint_path_case_is_preserved(): void
+    {
+        $providerA = $this->makeProvider(['base_url' => 'https://models.example.com/Models/V1']);
+        $providerB = $this->makeProvider(['base_url' => 'https://models.example.com/models/v1']);
+        $providerB->forceFill(['id' => $providerA->id]);
+
+        $model = $this->makeModel($providerA);
+
+        // The path can be case-sensitive: two different paths may be two
+        // different endpoints and must NOT collide.
+        $a = $this->fingerprint()->compute($providerA, $model, $this->buckets());
+        $b = $this->fingerprint()->compute($providerB, $model, $this->buckets());
+
+        $this->assertNotSame($a, $b);
+    }
+
     public function test_different_model_id_or_name_changes_the_fingerprint(): void
     {
         $provider = $this->makeProvider();
