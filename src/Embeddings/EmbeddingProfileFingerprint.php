@@ -7,6 +7,7 @@ namespace HomeSide\AiAgents\Embeddings;
 use HomeSide\AiAgents\Enums\AiDriver;
 use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModel;
+use InvalidArgumentException;
 use JsonException;
 
 /**
@@ -80,10 +81,35 @@ final class EmbeddingProfileFingerprint
     }
 
     /**
-     * Normalise the endpoint so cosmetic differences do not change identity.
+     * Normalise the endpoint so COSMETIC differences do not change identity.
+     *
+     * Only the case-insensitive URL parts are lowered (scheme, host); the
+     * path and query are preserved as-is because they can be case-sensitive
+     * and two different paths may be two different endpoints. Default ports
+     * are dropped (https:443, http:80) and trailing slashes removed.
+     *
+     * @throws InvalidArgumentException When the URL cannot be parsed.
      */
     private function normaliseEndpoint(string $baseUrl): string
     {
-        return rtrim(strtolower(trim($baseUrl)), '/');
+        $url = parse_url(trim($baseUrl));
+
+        if ($url === false || ! isset($url['host'])) {
+            throw new InvalidArgumentException("Invalid provider endpoint [{$baseUrl}].");
+        }
+
+        $scheme = strtolower($url['scheme'] ?? 'https');
+        $host = strtolower($url['host']);
+        $port = $url['port'] ?? null;
+
+        // Drop the default port for each scheme: it names the same endpoint.
+        $isDefaultPort = ($scheme === 'https' && $port === 443)
+            || ($scheme === 'http' && $port === 80);
+
+        $portPart = ($port !== null && ! $isDefaultPort) ? ':'.$port : '';
+        $path = isset($url['path']) ? rtrim($url['path'], '/') : '';
+        $query = isset($url['query']) ? '?'.$url['query'] : '';
+
+        return "{$scheme}://{$host}{$portPart}{$path}{$query}";
     }
 }
