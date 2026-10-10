@@ -893,9 +893,15 @@ provider, model, driver, dimensions, `profileVersion`, `purpose`,
   `query` (search text). The purpose only selects which options apply.
 - **Options** live on `AiProviderModel.embedding_options` as
   `{generic, document, query}`; `document`/`query` are merged over `generic`
-  (`array_replace_recursive`). A caller can never pass arbitrary provider
-  options — only the trusted, stored configuration is used. Credentials stay
-  on `AiProvider`.
+  (`array_replace_recursive`; note that PHP lists inside a specific bucket
+  are merged positionally by that function's semantics). The contract is
+  enforced by [`EmbeddingOptionsValidator`](src/Embeddings/EmbeddingOptionsValidator.php:1)
+  — the single source of rules — both when SAVING (unknown purposes and
+  secret-ish keys like `authorization`, `api_key`, `token`, `headers` are
+  rejected recursively) and when RESOLVING (legacy/corrupt rows fail closed,
+  so the fingerprint always represents the stored data, never a sanitised
+  interpretation). A caller can never pass arbitrary provider options — only
+  the trusted, stored configuration is used. Credentials stay on `AiProvider`.
 - **Fingerprint** ([`EmbeddingProfileFingerprint`](src/Embeddings/EmbeddingProfileFingerprint.php:1)):
   SHA-256 over a canonicalised payload (recursive key sorting; list order
   preserved). It represents the WHOLE profile — generic + document + query —
@@ -903,11 +909,19 @@ provider, model, driver, dimensions, `profileVersion`, `purpose`,
   change to any bucket (even query-only) changes it. It changes with provider
   id/driver/endpoint, model id/name, dimensions, `embedding_profile_version`
   or any option, and does NOT change with API-key rotation, display names or
-  probe metadata.
+  probe metadata. The endpoint is normalised carefully: scheme and host are
+  case-insensitive (and default ports dropped), but the PATH case is
+  preserved — two different paths may be two different endpoints.
 - **Version**: bump `embedding_profile_version`
   ([`EmbeddingProfileVersioner`](src/Embeddings/EmbeddingProfileVersioner.php:1))
   to invalidate the space even when the visible configuration is unchanged
-  (re-deployed weights behind the same alias). Never derived from `updated_at`.
+  (re-deployed weights behind the same alias). Never derived from `updated_at`;
+  the resolver requires it to be `>= 1`.
+- **Architectural rule**: any future configuration that can mathematically
+  affect the embeddings (normalisation, encoding, task type, prefixes,
+  pooling, custom preprocessing...) MUST be added to the fingerprint BEFORE it
+  is used in `EmbeddingManager`. Using it in the request without hashing it
+  silently mixes incompatible vector spaces.
 
 `EmbeddingManager` uses the resolved profile exclusively and always returns it
 on [`EmbeddingResultData`](src/Embeddings/EmbeddingResultData.php:1)
