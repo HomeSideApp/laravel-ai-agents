@@ -14,6 +14,7 @@ use HomeSide\AiAgents\Models\AiProvider;
 use HomeSide\AiAgents\Models\AiProviderModel;
 use HomeSide\AiAgents\Providers\ProviderModelResolver;
 use HomeSide\AiAgents\Providers\ProviderResolver;
+use InvalidArgumentException;
 
 /**
  * Resolves the embedding profile — the identity of the vector space — for a
@@ -32,6 +33,7 @@ final class EmbeddingProfileResolver
         private readonly ProviderResolver $providerResolver,
         private readonly ProviderModelResolver $modelResolver,
         private readonly EmbeddingProfileFingerprint $fingerprint,
+        private readonly EmbeddingOptionsValidator $optionsValidator,
     ) {}
 
     /**
@@ -99,7 +101,17 @@ final class EmbeddingProfileResolver
             ? $this->modelResolver->resolveExplicit($provider, $providerModelId, Capability::Embeddings)
             : $this->modelResolver->resolveDefault($provider, Capability::Embeddings);
 
-        $options = $model->embeddingOptions();
+        // Fail closed on legacy/corrupt data: the fingerprint must represent
+        // the stored options, never a sanitised interpretation of them.
+        $options = $this->optionsValidator->validate($model->embedding_options);
+
+        $profileVersion = $model->embedding_profile_version ?? 1;
+
+        if ($profileVersion < 1) {
+            throw new InvalidArgumentException(
+                "The embedding profile version of model [{$model->model}] must be >= 1, got {$profileVersion}.",
+            );
+        }
 
         $profile = new ResolvedEmbeddingProfileData(
             providerId: $provider->id,
@@ -108,7 +120,7 @@ final class EmbeddingProfileResolver
             driver: AiDriver::fromColumn($provider->type)->value,
             model: $model->model,
             dimensions: (int) $model->embedding_dimensions,
-            profileVersion: $model->embedding_profile_version ?? 1,
+            profileVersion: $profileVersion,
             purpose: $purpose,
             providerOptions: $model->embeddingOptionsFor($purpose),
             fingerprint: $this->fingerprint->compute($provider, $model, $options),

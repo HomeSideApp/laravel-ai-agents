@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Models;
 
 use HomeSide\AiAgents\Configuration\Capability;
+use HomeSide\AiAgents\Embeddings\EmbeddingOptionsValidator;
 use HomeSide\AiAgents\Enums\EmbeddingPurpose;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -84,6 +85,21 @@ class AiProviderModel extends Model
     public function provider(): BelongsTo
     {
         return $this->belongsTo(AiProvider::class, 'ai_provider_id');
+    }
+
+    /**
+     * Validate the embedding options contract before anything is persisted,
+     * so secrets or unknown purposes can never reach the database (and from
+     * there the profile DTO, logs or the fingerprint).
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (AiProviderModel $model): void {
+            if (array_key_exists('embedding_options', $model->getAttributes())
+                || $model->isDirty('embedding_options')) {
+                app(EmbeddingOptionsValidator::class)->validate($model->embedding_options);
+            }
+        });
     }
 
     /**

@@ -28,6 +28,7 @@ use HomeSide\AiAgents\Conversations\ConversationAccessGuard;
 use HomeSide\AiAgents\Conversations\ConversationManager;
 use HomeSide\AiAgents\Conversations\PackageConversationStore;
 use HomeSide\AiAgents\Embeddings\EmbeddingManager;
+use HomeSide\AiAgents\Embeddings\EmbeddingOptionsValidator;
 use HomeSide\AiAgents\Embeddings\EmbeddingProfileFingerprint;
 use HomeSide\AiAgents\Embeddings\EmbeddingProfileResolver;
 use HomeSide\AiAgents\Embeddings\EmbeddingProfileVersioner;
@@ -216,6 +217,7 @@ final class AiServiceProvider extends ServiceProvider
         $this->app->singleton(ImageGenerationProviderTester::class);
         $this->app->singleton(EmbeddingProviderTester::class);
         $this->app->singleton(ProviderModelProbeResultApplier::class);
+        $this->app->singleton(EmbeddingOptionsValidator::class);
         $this->app->singleton(EmbeddingProfileFingerprint::class);
         $this->app->singleton(EmbeddingProfileResolver::class);
         $this->app->singleton(EmbeddingProfileVersioner::class);
