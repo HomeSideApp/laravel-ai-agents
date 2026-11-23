@@ -19,7 +19,7 @@
         "php": "^8.2",
         "laravel/framework": "^13.0",
         "laravel/ai": "^1.1",
-        "rubix/ml": "^2.5"
+        "rubix/ml": "^3.3"
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
