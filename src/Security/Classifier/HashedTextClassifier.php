@@ -9,12 +9,9 @@ use Rubix\ML\Datasets\Labeled;
 use Rubix\ML\Datasets\Unlabeled;
 use Rubix\ML\Exceptions\RuntimeException;
 use Rubix\ML\NeuralNet\Optimizers\Adam;
+use Rubix\ML\NeuralNet\Optimizers\Schedulers\Constant;
 use Rubix\ML\PersistentModel;
 use Rubix\ML\Persisters\Filesystem;
-use Rubix\ML\Pipeline;
-use Rubix\ML\Transformers\L1Normalizer;
-use Rubix\ML\Transformers\MultibyteTextNormalizer;
-use Rubix\ML\Transformers\TokenHashingVectorizer;
 
 /**
  * The firewall's trained text classifier, backed by rubix/ml.
@@ -57,19 +54,17 @@ final class HashedTextClassifier
         int $epochs = 2000,
         float $learningRate = 0.05,
         int $batchSize = 1,
-    ): Pipeline {
-        return new Pipeline([
-            new MultibyteTextNormalizer,
-            new TokenHashingVectorizer($dimensions, new CharNGramTokenizer),
-            new L1Normalizer,
-        ], new LogisticRegression(
+    ): HashedTextEstimator {
+        // rubix 3 no tiene pipeline estimador+transformers: el envoltorio aplica
+        // el hashing y delega, así el espacio de features viaja con el modelo.
+        return new HashedTextEstimator($dimensions, new CharNGramTokenizer, RubixWarnings::guard(fn (): LogisticRegression => new LogisticRegression(
             batchSize: $batchSize,
-            optimizer: new Adam($learningRate),
+            optimizer: new Adam(new Constant($learningRate)),
             l2Penalty: 1e-4,
             epochs: $epochs,
             minChange: 1e-7,
             window: $epochs,
-        ));
+        )));
     }
 
     /**
