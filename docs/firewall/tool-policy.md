@@ -1,6 +1,7 @@
 # Tool policy
 
-Design proposal. Nothing here is implemented yet.
+Status: **implemented** in `src/Security/Tools`, with two deviations noted at the
+end. Disabled by default (`AI_AGENTS_FIREWALL_TOOLS`).
 
 ## Why this exists
 
@@ -275,3 +276,34 @@ Tests 8 and 9 are the reason the feature exists; they should fail today.
 
 Estimated effort: 3–4 days for the policy core plus tests 1–7; 1–2 more for the
 SDK integration and tests 8–10. Taint production is not included.
+
+## Implementation notes
+
+Two things differ from the proposal above, both discovered while building it.
+
+**Auto-wrapping is a one-liner, not a trait.** A PHP trait cannot intercept a
+method the class itself defines, so `AppliesToolPolicy` would have been dead
+weight. The host writes:
+
+```php
+public function tools(): iterable
+{
+    return GuardedTool::guard($this, [new CreateRecipe, new SearchProducts], bindings: [
+        'user_id' => $this->context->userId,
+        'tenant_id' => $this->context->tenantId,
+    ]);
+}
+```
+
+One line, and when the feature is off it returns the same array untouched.
+
+**Findings are not emitted yet.** Denials log a warning with the tool name, the
+policy name, the reason code and the *count* of arguments — never their values —
+because the findings pipeline needs a `FirewallFinding` shape this layer does not
+share yet. Linking the two is a follow-up; nothing in the decision path changes
+when it lands.
+
+Tests: `tests/Unit/Security/ToolPolicyTest.php` covers the precedence ladder and
+argument guards; `tests/Unit/Security/GuardedToolTest.php` covers the decorator,
+the disabled path, attribute resolution, unresolved-policy denial, and the two
+acceptance cases that beat every classifier.

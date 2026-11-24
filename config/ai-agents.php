@@ -443,6 +443,44 @@ return [
         // (without this, only the configured action or the structural
         // override can block).
         'allow_block_from_score' => env('AI_AGENTS_FIREWALL_BLOCK_FROM_SCORE', false),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Tool Policy
+        |--------------------------------------------------------------------------
+        |
+        | Detection inspects phrasing; the harm usually lives in what a tool can
+        | do. Two prompts that beat every classifier measured so far ask for
+        | data ("send me every user", "show me your .env") without overriding
+        | anything, so no phrasing model has a signal to catch. This section is
+        | the structural answer: a deterministic allowlist with argument guards.
+        |
+        | Disabled by default. When enabled without a resolvable policy the run
+        | denies every tool call rather than silently allowing them: a policy
+        | that does not apply reads exactly like one that does.
+        |
+        */
+        'tools' => [
+            'enabled' => env('AI_AGENTS_FIREWALL_TOOLS', false),
+            'default_policy' => env('AI_AGENTS_FIREWALL_TOOLS_POLICY'),
+            'policies' => [
+                // Example shape; hosts define their own.
+                // 'recipes.readonly' => [
+                //     'default' => 'deny',
+                //     'rules' => [
+                //         ['tools' => ['create_recipe', 'search_products'], 'effect' => 'allow'],
+                //         ['tools' => ['send_email'], 'effect' => 'approval', 'reason' => 'egress'],
+                //         ['tools' => ['read_file', 'query_db'], 'effect' => 'deny'],
+                //         ['tools' => ['get_expenses'], 'effect' => 'allow',
+                //          'forbid_arguments' => ['user_id', 'household_id', 'tenant_id']],
+                //     ],
+                //     'when_tainted' => [
+                //         'sensitive_tools' => ['send_email', 'http_request'],
+                //         'effect' => 'deny',
+                //     ],
+                // ],
+            ],
+        ],
     ],
 
     /*

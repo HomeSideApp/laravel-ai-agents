@@ -7,6 +7,8 @@ namespace HomeSide\AiAgents;
 use HomeSide\AiAgents\Configuration\AgentConfigurationResolver;
 use HomeSide\AiAgents\Console\Commands\ExpireProposalsCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallDownloadCommand;
+use HomeSide\AiAgents\Security\Tools\ToolPolicyManager;
+use HomeSide\AiAgents\Security\Tools\ToolPolicyResolver;
 use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
@@ -262,6 +264,11 @@ final class AiServiceProvider extends ServiceProvider
         // Firewall operations (Phase 2 of the plan): train, evaluate and
         // status over the classifier artifact.
         $this->app->singleton(FirewallTrainCommand::class);
+        $this->app->singleton(ToolPolicyManager::class);
+        $this->app->bind(ToolPolicyResolver::class, fn (Application $app): ToolPolicyResolver => new ToolPolicyResolver(
+            $app->make(ToolPolicyManager::class),
+            $app->make('config'),
+        ));
         $this->app->singleton(FirewallDownloadCommand::class);
         $this->app->singleton(FirewallEvaluateCommand::class);
         $this->app->singleton(FirewallStatusCommand::class);
