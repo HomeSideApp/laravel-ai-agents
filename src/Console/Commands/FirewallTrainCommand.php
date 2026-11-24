@@ -157,7 +157,9 @@ class FirewallTrainCommand extends Command
      */
     private function loadWithAdapter(string $path, string $source): array
     {
-        $adapterFile = dirname(__DIR__, 2).'/resources/firewall/datasets/'.basename($source).'.php';
+        // The adapters live at the package root (same depth as the model path
+        // resolved above), not under src/.
+        $adapterFile = dirname(__DIR__, 3).'/resources/firewall/datasets/'.basename($source).'.php';
 
         if (! is_file($adapterFile)) {
             throw new RuntimeException("No dataset adapter named [{$source}] at [{$adapterFile}].");

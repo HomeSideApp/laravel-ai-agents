@@ -6,6 +6,7 @@ namespace HomeSide\AiAgents;
 
 use HomeSide\AiAgents\Configuration\AgentConfigurationResolver;
 use HomeSide\AiAgents\Console\Commands\ExpireProposalsCommand;
+use HomeSide\AiAgents\Console\Commands\FirewallDownloadCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallStatusCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallTrainCommand;
@@ -261,6 +262,7 @@ final class AiServiceProvider extends ServiceProvider
         // Firewall operations (Phase 2 of the plan): train, evaluate and
         // status over the classifier artifact.
         $this->app->singleton(FirewallTrainCommand::class);
+        $this->app->singleton(FirewallDownloadCommand::class);
         $this->app->singleton(FirewallEvaluateCommand::class);
         $this->app->singleton(FirewallStatusCommand::class);
 
@@ -323,6 +325,7 @@ final class AiServiceProvider extends ServiceProvider
 
         $this->commands([
             FirewallTrainCommand::class,
+            FirewallDownloadCommand::class,
             FirewallEvaluateCommand::class,
             FirewallStatusCommand::class,
             ModelsDevSyncCommand::class,

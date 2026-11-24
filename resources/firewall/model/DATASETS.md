@@ -10,8 +10,29 @@ only the trained artifact and its metadata.
 |---|---|
 | Artifact | `resources/firewall/model/prompt-injection-v1.rbx` |
 | Version | 1 |
-| Training corpus | Seed corpus shipped in this repository (synthetic multilingual seed rows, see below) |
-| Status | **Seed model** — trains cleanly on the seed rows; replace with a model trained on real datasets for production use |
+| Training corpus | `neuralchemy/Prompt-injection-dataset` (80% split) + domain rows from `corpus.php` repeated 25x as hard negatives |
+| Status | Trained on real data; promoted with held-out metrics. Regenerate with `train-dataset.php` |
+
+### Combined corpus (v1, current)
+
+Trained on the public dataset below plus the repository's domain rows. The domain
+rows are not decoration: a model trained on the public dataset alone scored
+`agregá 2 kg de asado` as an attack and flagged **all 55** held-out app prompts,
+because that dataset's benign class is English wiki and jailbreak-game text, so
+every colloquial Spanish message is out of distribution. Repeating the domain
+rows as hard negatives raised held-out f1 from 0.866 to 0.908 and brought the
+worst benign score back from 0.734 to 0.580.
+
+Measured on `eval-cases.php` (held out from training) and the 20% split:
+
+| Artifact | f1 (held-out real) | Worst benign | App benign >= 0.70 | App attacks >= 0.50 |
+|---|---|---|---|---|
+| seed corpus only | — | 0.423 | 0 | 66.7% |
+| public dataset only | 0.866 | 0.734 | 55 / 55 | 100% |
+| **combined (v1)** | **0.908** | **0.580** | **0** | **93.9%** |
+
+0.70 matters because the classifier carries weight 0.5 into an aggregate whose
+`flag` threshold is 0.35: below 0.70 it cannot raise an alert on its own.
 
 ### Seed corpus
 
@@ -42,7 +63,7 @@ php artisan ai-agents:firewall:train storage/app/private/firewall-datasets/<slug
 
 | Dataset (Hugging Face ID) | Adapter file | Schema verification | Licence verification | Balance notes |
 |---|---|---|---|---|
-| `neuralchemy/Prompt-injection-dataset` | `datasets/neuralchemy.php` | **VERIFIED** (config=`full`, columns: `text`, `label` int 0/1, `category`, `source`, `severity`, `group_id`, `augmented`, `tags`; 14,036 train rows) | Apache-2.0 | 3,250 inj / 1,939 ben (in downloaded subset) |
+| `neuralchemy/Prompt-injection-dataset` | `datasets/neuralchemy.php` | **VERIFIED** (config=`full`, columns: `text`, `label` int 0/1, `category`, `source`, `severity`, `group_id`, `augmented`, `tags`; 14,036 train rows) | Apache-2.0 | downloaded 2026-11-24: 9,500 rows (5,961 inj / 3,539 ben); split 7,600 train / 1,900 held-out with seed 42; 18 rows skipped by the adapter (no usable text) |
 | `deepset/prompt-injections` | `datasets/deepset.php` | **PENDING** | **PENDING** | most-cited binary dataset |
 | `jackhhao/jailbreak-classification` | `datasets/jackhhao.php` | **PENDING** | **PENDING** | jailbreak/regular binary |
 | `xTRam1/safe-guard-prompt-injection` | `datasets/xtram1.php` | **PENDING** | **PENDING** | balanced |
