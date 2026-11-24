@@ -37,6 +37,11 @@ qa: lint-test analyse test
 train:
 	$(COMPOSE) run --rm qa php resources/firewall/model/generate-seed.php
 
+# Firewall classifier: score the held-out evaluation corpus and print the
+# benign/attack distributions, the false-positive count and the detection rate.
+classifier-eval:
+	$(COMPOSE) run --rm qa php resources/firewall/model/evaluate.php
+
 shell:
 	$(COMPOSE) run --rm qa sh
 

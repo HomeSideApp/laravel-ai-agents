@@ -80,7 +80,14 @@ final class HashedTextClassifier
         int $epochs = 2000,
         float $learningRate = 0.05,
         int $batchSize = 1,
+        int $seed = 42,
     ): array {
+        // Batches are shuffled with PHP's global RNG, so without a fixed seed the
+        // same corpus and hyperparameters produce artifacts of wildly different
+        // quality (detection swung between 45% and 70% across identical runs).
+        // A security artifact cannot depend on luck: the seed is part of training.
+        mt_srand($seed);
+
         $samples = [];
         $labels = [];
 
