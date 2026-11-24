@@ -463,6 +463,14 @@ return [
         'tools' => [
             'enabled' => env('AI_AGENTS_FIREWALL_TOOLS', false),
             'default_policy' => env('AI_AGENTS_FIREWALL_TOOLS_POLICY'),
+
+            // Tools that return content the host did not author (URL fetchers,
+            // importers, OCR readers, third-party MCP tools). Running one marks
+            // the run untrusted for the rest of its life, which is what stops a
+            // "read untrusted, then exfiltrate" chain.
+            'taint' => [
+                'untrusted_tools' => [],
+            ],
             'policies' => [
                 // Example shape; hosts define their own.
                 // 'recipes.readonly' => [

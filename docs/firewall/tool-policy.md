@@ -1,7 +1,7 @@
 # Tool policy
 
-Status: **implemented** in `src/Security/Tools`, with two deviations noted at the
-end. Disabled by default (`AI_AGENTS_FIREWALL_TOOLS`).
+Status: **implemented** in `src/Security/Tools` and `src/Security/Taint`, with two
+deviations noted at the end. Disabled by default (`AI_AGENTS_FIREWALL_TOOLS`).
 
 ## Why this exists
 
@@ -180,12 +180,23 @@ imported recipes, OCR text, fetched pages, third-party MCP results.
 ],
 ```
 
-Scope of this proposal: the policy accepts a `Taintedness` value on the decision
-context and applies `when_tainted`. Producing and propagating that mark —
-`UntrustedSource`, run-scoped state, propagation through summaries — is a
-separate, larger piece of work. The policy is designed to consume the mark so
-that work does not have to reshape the policy later; until it lands, the context
-carries `Taintedness::Clean` and `when_tainted` rules are inert.
+Implemented in `src/Security/Taint`:
+
+- `UntrustedContent` carries text together with a `TaintStamp`, and
+  `into($scope)` returns the text while marking the run — one line at the call
+  site.
+- `TaintScope` is the run-scoped state. It is **monotonic**: nothing in the API
+  clears it. Washing a taint back to clean would require proving the model did
+  not carry the content forward, and the model paraphrases, so a sticky flag
+  over-blocks in exchange for never silently under-blocking.
+- `TaintRegistry` keys scopes by run and is bounded, so a long-lived worker does
+  not keep one per run forever.
+- `firewall.tools.taint.untrusted_tools` names the tools whose output is
+  untrusted content. Running one marks the rest of the run, which is what breaks
+  the "read untrusted, then exfiltrate" chain.
+
+The decorator reads taint **at call time**, not at wrap time, because a tool
+earlier in a run can turn a clean run untrusted and the decision has to see it.
 
 ## Approvals
 
@@ -307,3 +318,11 @@ Tests: `tests/Unit/Security/ToolPolicyTest.php` covers the precedence ladder and
 argument guards; `tests/Unit/Security/GuardedToolTest.php` covers the decorator,
 the disabled path, attribute resolution, unresolved-policy denial, and the two
 acceptance cases that beat every classifier.
+
+**Taint is conservative, and knowingly so.** It is per run, not per message: once
+a run reads one imported recipe, every later call in that run is treated as
+tainted even if the model never used that text. The alternative — trying to
+prove which parts of a paraphrase a model carried forward — is not decidable by
+string inspection, and a policy that under-blocks silently is worse than one that
+asks for approval too often. Hosts that find it noisy should scope runs to a
+single user intent.

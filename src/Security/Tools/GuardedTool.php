@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Security\Tools;
 
+use HomeSide\AiAgents\Security\Taint\TaintScope;
+use HomeSide\AiAgents\Security\Taint\TaintStamp;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\JsonSchema\Types\Type;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Laravel\Ai\Approvals\Approval;
 use Laravel\Ai\Concerns\InteractsWithApprovals;
 use Laravel\Ai\Contracts\Approvable;
@@ -33,11 +36,18 @@ final class GuardedTool implements Approvable, Tool
     /**
      * @param  array<string, mixed>  $bindings  Host-supplied values that override the model's.
      */
+    /**
+     * @param  array<string, mixed>  $bindings  Host-supplied values that override the model's.
+     * @param  list<string>  $untrustedToolPatterns  Tools whose output is untrusted content;
+     *                                               running one taints the rest of the run.
+     */
     public function __construct(
         public readonly Tool $inner,
         public readonly ToolPolicy $policy,
         private readonly Taintedness $tainted = Taintedness::Clean,
         private readonly array $bindings = [],
+        private readonly ?TaintScope $scope = null,
+        private readonly array $untrustedToolPatterns = [],
     ) {}
 
     /**
@@ -56,6 +66,7 @@ final class GuardedTool implements Approvable, Tool
         iterable $tools,
         Taintedness $tainted = Taintedness::Clean,
         array $bindings = [],
+        ?TaintScope $scope = null,
     ): array {
         $list = is_array($tools) ? array_values($tools) : iterator_to_array($tools, false);
 
@@ -67,9 +78,12 @@ final class GuardedTool implements Approvable, Tool
 
         $policy = $resolver->resolveOrDenyAll($agent);
 
+        $untrustedTools = (array) config('ai-agents.firewall.tools.taint.untrusted_tools', []);
+        $untrustedTools = array_values(array_map(strval(...), $untrustedTools));
+
         return array_map(
             static fn (mixed $tool): mixed => $tool instanceof Tool
-                ? new self($tool, $policy, $tainted, $bindings)
+                ? new self($tool, $policy, $tainted, $bindings, $scope, $untrustedTools)
                 : $tool,
             $list,
         );
@@ -114,7 +128,15 @@ final class GuardedTool implements Approvable, Tool
             return $decision->refusal($this->name());
         }
 
-        return $this->inner->handle($this->bind($request));
+        $result = $this->inner->handle($this->bind($request));
+
+        // A tool that returns untrusted content taints the rest of the run, so a
+        // later call cannot exfiltrate what this one just read.
+        if ($this->scope !== null && $this->returnsUntrustedContent()) {
+            $this->scope->mark(TaintStamp::tool($this->name()));
+        }
+
+        return $result;
     }
 
     public function shouldRequestApproval(Request $request): ?Approval
@@ -137,7 +159,7 @@ final class GuardedTool implements Approvable, Tool
             return $this->lastDecision = $this->policy->decide(
                 $this->name(),
                 $request->all(),
-                $this->tainted,
+                $this->currentTaint(),
             );
         } catch (\Throwable $exception) {
             // A broken policy must fail closed and must not surface as an
@@ -153,6 +175,30 @@ final class GuardedTool implements Approvable, Tool
                 'The tool policy could not be evaluated.',
             );
         }
+    }
+
+    /**
+     * Taint is read at call time, not at wrap time: a tool earlier in the same
+     * run can turn a clean run untrusted, and the decision has to see that.
+     */
+    private function currentTaint(): Taintedness
+    {
+        if ($this->scope !== null && $this->scope->isTainted()) {
+            return Taintedness::Untrusted;
+        }
+
+        return $this->tainted;
+    }
+
+    private function returnsUntrustedContent(): bool
+    {
+        foreach ($this->untrustedToolPatterns as $pattern) {
+            if ($pattern === $this->name() || Str::is($pattern, $this->name())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function bind(Request $request): Request
