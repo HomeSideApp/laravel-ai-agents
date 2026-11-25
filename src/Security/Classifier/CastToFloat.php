@@ -25,7 +25,7 @@ final class CastToFloat implements Transformer
     }
 
     /**
-     * @param  list<array<string, mixed>>  $samples
+     * @param  list<list<mixed>>  $samples
      */
     public function transform(array &$samples): void
     {

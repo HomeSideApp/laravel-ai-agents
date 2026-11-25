@@ -48,4 +48,15 @@ final class UntrustedContent
 
         return $this->text;
     }
+
+    /**
+     * Marks the run and returns the text wrapped for a prompt, so the model sees
+     * it as data instead of as an instruction.
+     */
+    public function forPrompt(TaintScope $scope, ?Spotlight $spotlight = null, string $source = 'an untrusted source'): string
+    {
+        $scope->mark($this->stamp);
+
+        return ($spotlight ?? new Spotlight)->apply($this->text, $source);
+    }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HomeSide\AiAgents\Security\Tools;
 
+use HomeSide\AiAgents\Security\FirewallFinding;
 use HomeSide\AiAgents\Security\Taint\TaintScope;
 use HomeSide\AiAgents\Security\Taint\TaintStamp;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -33,6 +34,9 @@ final class GuardedTool implements Approvable, Tool
 
     private ?ToolDecision $lastDecision = null;
 
+    /** @var array<string, mixed> */
+    private array $lastArguments = [];
+
     /**
      * @param  array<string, mixed>  $bindings  Host-supplied values that override the model's.
      */
@@ -48,6 +52,7 @@ final class GuardedTool implements Approvable, Tool
         private readonly array $bindings = [],
         private readonly ?TaintScope $scope = null,
         private readonly array $untrustedToolPatterns = [],
+        private readonly ?ToolPolicyFindings $findings = null,
     ) {}
 
     /**
@@ -78,12 +83,13 @@ final class GuardedTool implements Approvable, Tool
 
         $policy = $resolver->resolveOrDenyAll($agent);
 
+        $findings = app(ToolPolicyFindings::class);
         $untrustedTools = (array) config('ai-agents.firewall.tools.taint.untrusted_tools', []);
         $untrustedTools = array_values(array_map(strval(...), $untrustedTools));
 
         return array_map(
             static fn (mixed $tool): mixed => $tool instanceof Tool
-                ? new self($tool, $policy, $tainted, $bindings, $scope, $untrustedTools)
+                ? new self($tool, $policy, $tainted, $bindings, $scope, $untrustedTools, $findings)
                 : $tool,
             $list,
         );
@@ -125,6 +131,8 @@ final class GuardedTool implements Approvable, Tool
                 'argument_keys' => count($request->all()),
             ]);
 
+            $this->record($decision);
+
             return $decision->refusal($this->name());
         }
 
@@ -143,6 +151,10 @@ final class GuardedTool implements Approvable, Tool
     {
         $decision = $this->decide($request);
 
+        if ($decision->requiresApproval()) {
+            $this->record($decision);
+        }
+
         return $decision->requiresApproval()
             ? Approval::required($decision->reason)
             : null;
@@ -153,8 +165,32 @@ final class GuardedTool implements Approvable, Tool
         return $this->lastDecision;
     }
 
+    /**
+     * Publishes the decision the same way the content layers do, so one log or
+     * dashboard sees both. The argument values are never part of it.
+     */
+    private function record(ToolDecision $decision): void
+    {
+        $this->findings?->record(
+            new FirewallFinding(
+                action: $decision->blocks() ? FirewallFinding::ACTION_BLOCK : FirewallFinding::ACTION_FLAG,
+                patterns: [$decision->reasonCode->value],
+                note: $decision->reason,
+                score: $decision->blocks() ? 1.0 : 0.5,
+                signals: ['tool_policy' => $decision->blocks() ? 1.0 : 0.5],
+            ),
+            context: [
+                'tool' => $this->name(),
+                'policy' => $this->policy->name,
+                'argument_keys' => array_keys($this->lastArguments),
+            ],
+        );
+    }
+
     private function decide(Request $request): ToolDecision
     {
+        $this->lastArguments = $request->all();
+
         try {
             return $this->lastDecision = $this->policy->decide(
                 $this->name(),

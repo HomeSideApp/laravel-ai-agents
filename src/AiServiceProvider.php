@@ -8,6 +8,7 @@ use HomeSide\AiAgents\Configuration\AgentConfigurationResolver;
 use HomeSide\AiAgents\Console\Commands\ExpireProposalsCommand;
 use HomeSide\AiAgents\Console\Commands\FirewallDownloadCommand;
 use HomeSide\AiAgents\Security\Taint\TaintRegistry;
+use HomeSide\AiAgents\Security\Tools\ToolPolicyFindings;
 use HomeSide\AiAgents\Security\Tools\ToolPolicyManager;
 use HomeSide\AiAgents\Security\Tools\ToolPolicyResolver;
 use HomeSide\AiAgents\Console\Commands\FirewallEvaluateCommand;
@@ -266,6 +267,7 @@ final class AiServiceProvider extends ServiceProvider
         // status over the classifier artifact.
         $this->app->singleton(FirewallTrainCommand::class);
         $this->app->singleton(TaintRegistry::class);
+        $this->app->singleton(ToolPolicyFindings::class);
         $this->app->singleton(ToolPolicyManager::class);
         $this->app->bind(ToolPolicyResolver::class, fn (Application $app): ToolPolicyResolver => new ToolPolicyResolver(
             $app->make(ToolPolicyManager::class),

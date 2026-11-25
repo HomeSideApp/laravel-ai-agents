@@ -1,7 +1,8 @@
 # Tool policy
 
-Status: **implemented** in `src/Security/Tools` and `src/Security/Taint`, with two
-deviations noted at the end. Disabled by default (`AI_AGENTS_FIREWALL_TOOLS`).
+Status: **implemented** in `src/Security/Tools` and `src/Security/Taint`, including
+spotlighting and finding publication. Disabled by default
+(`AI_AGENTS_FIREWALL_TOOLS`).
 
 ## Why this exists
 
@@ -308,11 +309,22 @@ public function tools(): iterable
 
 One line, and when the feature is off it returns the same array untouched.
 
-**Findings are not emitted yet.** Denials log a warning with the tool name, the
-policy name, the reason code and the *count* of arguments — never their values —
-because the findings pipeline needs a `FirewallFinding` shape this layer does not
-share yet. Linking the two is a follow-up; nothing in the decision path changes
-when it lands.
+**Findings are published, the buffer is not a sink.** Denials record a
+`FirewallFinding` with `action = block`, approvals record `action = flag`, and
+both carry the reason code as a pattern plus a `tool_policy` signal. They land in
+`ToolPolicyFindings`, a bounded in-memory buffer the host drains — a tool call has
+no return channel, unlike the content layers, so the host decides where they go.
+The context carries tool name, policy name and *argument keys only*: values never
+enter the finding, and a test asserts a secret in an argument never reaches the
+serialised buffer. A warning is still logged for hosts that read logs.
+
+**Spotlighting is available, not automatic.** `UntrustedContent::forPrompt($scope)`
+marks the run and wraps the text in random delimiters with an explicit data
+preamble, optionally datamarking every line. It is opt-in at the call site because
+it rewrites the prompt, and a library that silently rewrites prompts is a
+debugging nightmare. Neither spotlighting nor taint is a guarantee: a payload
+inside the delimiters can still be obeyed, which is why the tool policy — not the
+prompt — is the load-bearing part.
 
 Tests: `tests/Unit/Security/ToolPolicyTest.php` covers the precedence ladder and
 argument guards; `tests/Unit/Security/GuardedToolTest.php` covers the decorator,
@@ -326,3 +338,8 @@ prove which parts of a paraphrase a model carried forward — is not decidable b
 string inspection, and a policy that under-blocks silently is worse than one that
 asks for approval too often. Hosts that find it noisy should scope runs to a
 single user intent.
+
+Tests for this pair: `tests/Unit/Security/SpotlightTest.php` (delimiters, fresh id
+per call, a payload cannot close the block it cannot predict, datamarking) and
+`tests/Unit/Security/ToolPolicyFindingsTest.php` (block vs flag, bounded buffer,
+argument values never recorded).

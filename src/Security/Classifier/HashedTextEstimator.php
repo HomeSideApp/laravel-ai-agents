@@ -5,14 +5,16 @@ declare(strict_types=1);
 namespace HomeSide\AiAgents\Security\Classifier;
 
 use Rubix\ML\Datasets\Dataset;
+use Rubix\ML\DataType;
 use Rubix\ML\Estimator;
 use Rubix\ML\EstimatorType;
 use Rubix\ML\Learner;
-use Rubix\ML\Transformers\TokenHashingVectorizer;
 use Rubix\ML\Persistable;
+use Rubix\ML\PersistentModel;
 use Rubix\ML\Probabilistic;
 use Rubix\ML\Transformers\L1Normalizer;
 use Rubix\ML\Transformers\MultibyteTextNormalizer;
+use Rubix\ML\Transformers\TokenHashingVectorizer;
 
 /**
  * Estimator that hashes text before handing it to the learner.
@@ -27,7 +29,7 @@ use Rubix\ML\Transformers\MultibyteTextNormalizer;
  * The transformers involved are stateless, so applying them needs no fitting and
  * nothing extra has to be persisted beyond the dimensions and the learner.
  */
-final class HashedTextEstimator implements Learner, Probabilistic, Persistable
+final class HashedTextEstimator implements Learner, Persistable, Probabilistic
 {
     public function __construct(
         private readonly int $dimensions,
@@ -73,7 +75,7 @@ final class HashedTextEstimator implements Learner, Probabilistic, Persistable
     {
         return $this->estimator instanceof Persistable
             ? $this->estimator->revision()
-            : \Rubix\ML\PersistentModel::class;
+            : PersistentModel::class;
     }
 
     public function type(): EstimatorType
@@ -81,13 +83,10 @@ final class HashedTextEstimator implements Learner, Probabilistic, Persistable
         return $this->estimator->type();
     }
 
-    /** @return array<string, mixed> */
+    /** @return list<DataType> */
     public function compatibility(): array
     {
-        /** @var array<string, mixed> $compatibility */
-        $compatibility = $this->estimator->compatibility();
-
-        return $compatibility;
+        return $this->estimator->compatibility();
     }
 
     /** @return array<string, mixed> */
